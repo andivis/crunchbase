@@ -1,0 +1,37 @@
+{
+    "field_ids": [
+        "identifier",
+        "categories",
+        "location_identifiers",
+        "short_description",
+        "rank_org"
+    ],
+    "order": [
+        {
+            "field_id": "rank_org",
+            "sort": "asc"
+        }
+    ],
+    "query": [
+        {
+            "type": "predicate",
+            "field_id": "location_identifiers",
+            "operator_id": "includes",
+            "values": [
+                "united-kingdom"
+            ]
+        },
+        {
+            "type": "predicate",
+            "field_id": "founded_on",
+            "operator_id": "between",
+            "values": [
+                "1/1/20",
+                "2/1/20"
+            ]
+        }
+    ],
+    "field_aggregators": [],
+    "collection_id": "organizations",
+    "limit": 15
+}

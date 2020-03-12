@@ -43,11 +43,16 @@ class Main:
         self.options = {
             'inputFile': 'user-data/input/input.csv',
             'outputFile': 'user-data/output/output.csv',
-            'proxyListUrl': 'program/resources/resource',
+            'proxyListUrl': helpers.getFile('program/resources/resource'),
+            'proxyProvider': 'smartproxy',
             'hoursBetweenRuns': 7 * 24,
+            'defaultSearchUrl': '',
+            'secondsBetweenRequests': 0,
             'loggerName': self.log.name,
             'searchResultLimit': 100 * 1000,
-            'resumeSearch': 1
+            'randomizeUserAgent': 1,
+            'resumeSearch': 1,
+            'useGoogle': 1
         }
 
         optionsFileName = helpers.getParameter('--optionsFile', False, 'user-data/options.ini')

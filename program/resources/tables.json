@@ -2,6 +2,7 @@
     "result": {
         "columns": {
             "id": "text",
+            "permalink": "text",
             "name": "text",
             "legalName": "text",
             "city": "text",

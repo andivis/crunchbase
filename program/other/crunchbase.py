@@ -16,6 +16,7 @@ if '--debug' in sys.argv:
     from api import Api
     from other import Internet
     from website import Website
+    from google import Google
 
     from helpers import get
 else:
@@ -25,32 +26,28 @@ else:
     from ..library.api import Api
     from ..library.other import Internet
     from ..library.website import Website
+    from ..library.google import Google
 
     from ..library.helpers import get
 
 class Crunchbase:
     def runRepeatedly(self, inputRows):
-        self.gmDateStarted = datetime.utcnow()
-
-        if '--debug' in sys.argv:
-            self.database.execute(f'delete from result')
-
         while True:
             self.run(inputRows)
             self.waitForNextRun()
 
     def run(self, inputRows):
-        self.requestCount = 0
+        self.gmDateStarted = datetime.utcnow()
         self.newSearchResultsCount = 0
 
         self.getReady()
 
+        if self.isDone():
+            return
+
         for i, inputRow in enumerate(inputRows):
             try:
-                self.log.info(f'On item {i + 1} of {len(inputRows)}: {get(inputRow, "POSTCODE")}: {get(inputRow, "VIEW_NAME")}')
-
-                profile = self.getProfile('/organization/monzo')
-                self.output(inputRow, profile)
+                self.log.info(f'On item {i + 1} of {len(inputRows)}: {get(inputRow, "keyword")}')
 
                 self.search(inputRow)
 
@@ -59,17 +56,18 @@ class Crunchbase:
             except Exception as e:
                 helpers.handleException(e)
 
+        self.markDone()
+
     def output(self, inputRow, newResult):
         if not get(newResult, 'id'):
             return
-
-        self.storeToDatabase(inputRow, newResult)
 
         self.log.info('Writing to csv file')
 
         outputFile = self.options['outputFile']
 
         ignoreColumns = [
+            'permalink',
             'json'
         ]
 
@@ -100,6 +98,8 @@ class Crunchbase:
         # this quotes fields that contain commas
         helpers.appendCsvFile(values, outputFile)
 
+        self.storeToDatabase(inputRow, newResult)
+
     def writeHeaders(self, fields, outputFile):
         if not os.path.exists(outputFile):
             printableNames = {
@@ -121,9 +121,22 @@ class Crunchbase:
             helpers.toFile(','.join(printableFields), outputFile)
 
     def getProfile(self, url):
+        self.api.proxies = self.internet.getRandomProxy()
+
+        original = self.api.urlPrefix;
+        self.api.urlPrefix = '';
+        ipInformation = self.api.get('https://ipinfo.io/json')
+        self.log.debug(ipInformation)
+        self.api.urlPrefix = original;
+        
+        self.api.setHeadersFromHarFile('program/resources/headers.json', '')
+
         result = {}
         
         document = self.getDocument(url)
+
+        if document == None:
+            return result
         
         jsonElements = self.website.getXpath('', "//script[@type = 'application/ld+json' or @type = 'application/json']", False, None, document)
 
@@ -205,6 +218,7 @@ class Crunchbase:
         result = {
             'gmDate': str(datetime.utcnow()),
             'id': helpers.getNested(dictionary, ['properties', 'identifier', 'uuid']),
+            'permalink': helpers.getNested(dictionary, ['properties', 'identifier', 'permalink']),
             'name': helpers.getNested(dictionary, ['properties', 'title']),
             'legalName': helpers.getNested(dictionary, ['cards', 'overview_fields', 'legal_name']),
             'city': self.findByValue(locations, 'location_type', 'city', 'value'),
@@ -239,53 +253,141 @@ class Crunchbase:
         return ''
 
     def search(self, inputRow):
+        searchSites = [
+            'google.com',
+            'crunchbase.com'
+        ]
+
+        # can only search by location using the built-in search
+        if get(inputRow, 'search type') == 'location' or not self.options['useGoogle']:
+            searchSites = [
+                'crunchbase.com'
+            ]
+
+        for searchSite in searchSites:
+            success = self.searchUsingSite(inputRow, searchSite)
+
+            if success:
+                break
+
+    def searchUsingSite(self, inputRow, searchSite):
+        result = False
+        
         self.api.proxies = self.internet.getRandomProxy()
         
-        if not inputRow:
-            return
+        keyword = get(inputRow, 'keyword')
+        
+        if not keyword:
+            return result
 
-        # subtract a little to allow a margin of error
-        if self.requestCount >= self.maximumRequestsPerHour - 5:
-            self.log.info(f'Reached maximum of {self.maximumRequestsPerHour}. Waiting 1 hour.')
-            helpers.wait(3600)
-            self.requestCount = 0
+        searchResults = []
 
-        searchResults = self.api.get('', None, False)
+        if searchSite == 'google.com':
+            self.google.captcha = False
+            searchResults = self.google.search(f'site:crunchbase.com "{keyword}"', 5)
 
-        self.requestCount += 1
+            if self.google.captcha:
+                return False
+        elif searchSite == 'crunchbase.com':
+            # use crunchbase search as a backup
+            self.api.setHeadersFromHarFile('program/resources/headers-search.json', '')
 
-        self.log.info(f'Found {len(searchResults)} results')
+            if get(inputRow, 'search type') == 'location':
+                toSend = helpers.getJsonFile('program/resources/body-search.json')
+                
+                toSend['query'][0]['values'][0] = keyword
+
+                toSend = json.dumps(toSend)
+
+                searchResults = self.api.post(f'/v4/data/searches/organizations?source=slug', toSend)
+            else:
+                searchResults = self.api.get(f'/v4/data/autocompletes?query={keyword}&collection_ids=organizations&limit=25&source=topSearch')
+            
+            self.waitBetweenRequests()
+
+            searchResults = get(searchResults, 'entities')
+
+            self.log.info(f'Found {len(searchResults)} results')
+
+            if get(inputRow, 'search type') == 'company':
+                if searchResults and len(searchResults) > 0:
+                    searchResults = searchResults[0:1]
 
         for searchResult in searchResults:
-            if not self.passesFilters(searchResult):
-                continue
+            if get(inputRow, 'search type') == 'location':
+                searchResult = get(searchResult, 'properties')
 
-            self.newSearchResultsCount += 1
+            if not self.passesFilters(searchResult, searchSite):
+                if get(inputRow, 'search type') == 'location':
+                    continue
+                else:
+                    break
+
+            url = ''
             
-            self.log.info(f'New results: {self.newSearchResultsCount}. Result: {get(searchResult, "name")}.')
+            if searchSite == 'google.com':
+                if not '/organization/' in searchResult:
+                    continue 
 
-            self.store(inputRow, searchResult)
+                url = '/organization/' + self.getProfileId(searchResult)
+            elif searchSite == 'crunchbase.com':
+                url = helpers.getNested(searchResult, ['identifier', 'permalink'])
+                url = '/organization/' + url
 
-    def passesFilters(self, searchResult):
+            profile = self.getProfile(url)
+
+            if not profile:
+                if get(inputRow, 'search type') == 'location':
+                    continue
+                else:
+                    break
+
+            self.output(inputRow, profile)
+
+            self.newSearchResultsCount += 1            
+            self.log.info(f'New results: {self.newSearchResultsCount}. Result: {get(profile, "name")}.')
+
+            result = True
+
+            if not get(inputRow, 'search type') == 'location':
+                # only want first result
+                break
+        
+        return result
+
+    def getProfileUrl(self, url):
+        return 'https://www.crunchbase.com/organization/' + self.getProfileId(url)
+
+    def getProfileId(self, url):
+        return helpers.findBetween(url, '/organization/', '/')
+
+    def passesFilters(self, searchResult, searchSite):
         result = True
 
-        if f',{get(newResult, "id")},' in helpers.getFile(outputFile):
-            self.log.debug('Skipping. Already in the output file.')
-            result = False
+        key = 'id'
+        id = ''
 
-        if self.inDatabase(searchResult):
+        if searchSite == 'google.com':
+            key = 'permalink'
+            id = self.getProfileId(searchResult)
+        elif searchSite == 'crunchbase.com':
+            id = helpers.getNested(searchResult, ['identifier', 'uuid'])
+
+        if self.inDatabase(key, id):
+            result = False
+        elif f',{id},' in helpers.getFile(self.options['outputFile']):
+            self.log.debug('Skipping. Already in the output file.')
             result = False
 
         return result
 
-    def inDatabase(self, searchResult):
+    def inDatabase(self, key, value):
         result = False
 
-        id = get(searchResult, 'listing_id')
-        row = self.database.getFirst('result', 'id', f"id = '{id}'")
+        row = self.database.getFirst('result', 'id', f"{key} = '{value}'")
 
         if row:
-            self.log.debug(f'Skipping {id}. Already in the database.')
+            self.log.debug(f'Skipping. Already in the database.')
             result = True
         
         return result
@@ -303,25 +405,51 @@ class Crunchbase:
         if not self.options['resumeSearch'] and os.path.exists(self.options['outputFile']):
             # move old output file
             rotatedFileName = self.options['outputFile'] + '.old'
+            helpers.removeFile(rotatedFileName)
             os.rename(self.options['outputFile'], rotatedFileName)
+
+    def waitBetweenRequests(self):
+        if get(self.options, 'secondsBetweenRequests'):
+            time.sleep(self.options['secondsBetweenRequests'])
 
     def getDocument(self, url):
         response = self.api.get(url, None, False, True)
+        self.waitBetweenRequests()
+
+        if response and 'verify you are a human' in response.text:
+            self.log.error('There is a captcha')
+            return None
+        
         document = lh.fromstring(response.content)
         return document
-    
-    def markDone(self, inputRow, newSearchResults):
-        if not newSearchResults:
-            return
 
+    def isDone(self):
+        result = False
+
+        if not self.options['resumeSearch']:
+            return result
+
+        minimumDate = helpers.getDateStringSecondsAgo(self.options['hoursBetweenRuns'] * 3600, True)
+
+        row = self.database.getFirst('history', '*', f"gmDateCompleted > '{minimumDate}'", 'gmDateCompleted', 'desc')
+
+        if row:
+            self.log.info(f'Waiting until next run. Finished less than {self.options["hoursBetweenRuns"]} hours ago.')
+            result = True
+
+        return result
+
+    def markDone(self):
         history = {
-            'gmDate': str(datetime.utcnow())
+            'gmDate': str(self.gmDateStarted),
+            'gmDateCompleted': str(datetime.utcnow())
         }
 
         self.database.insert('history', history)
 
     def waitForNextRun(self):
-        nextDay = self.gmDateStarted + timedelta(hours=self.options['hoursBetweenRuns'])
+        # added a few seconds for a margin of error
+        nextDay = self.gmDateStarted + timedelta(hours=self.options['hoursBetweenRuns'], seconds=10)
 
         self.log.info('Done this run')
         
@@ -337,8 +465,11 @@ class Crunchbase:
         self.database = Database('program/resources/tables.json')
 
         self.api = Api('https://www.crunchbase.com', self.options)
-        self.api.setHeadersFromHarFile('program/resources/headers.txt', '')
+        self.api.timeout = 15
         self.internet = Internet(self.options)
         self.website = Website(self.options)
+        self.google = Google(self.options)
+        self.google.internet = self.internet
 
-        self.maximumRequestsPerHour = 3600
+        if '--debug' in sys.argv:
+            pass #debug self.database.execute(f'delete from result')
