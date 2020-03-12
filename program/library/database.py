@@ -5,9 +5,14 @@ import logging
 import time
 import random
 
-from . import helpers
+if '--debug' in sys.argv:
+    import helpers as helpers
 
-from .helpers import get
+    from helpers import get
+else:
+    from . import helpers
+    
+    from .helpers import get
 
 class Database:
     def execute(self, statement, returnResult=False):

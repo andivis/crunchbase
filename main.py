@@ -6,9 +6,15 @@ import traceback
 import random
 import string
 
-import program.library.helpers as helpers
+if '--debug' in sys.argv:
+    import helpers as helpers
 
-from program.library.helpers import get
+    from helpers import get
+else:
+    import program.library.helpers as helpers
+
+    from program.library.helpers import get
+
 from program.other.crunchbase import Crunchbase
 
 class Main:

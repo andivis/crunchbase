@@ -7,9 +7,14 @@ import urllib.parse
 
 from collections import OrderedDict
 
-from . import helpers
+if '--debug' in sys.argv:
+    import helpers as helpers
 
-from .helpers import get
+    from helpers import get
+else:
+    from . import helpers
+    
+    from .helpers import get
 
 class Api:
     def get(self, url, parameters=None, responseIsJson=True, returnResponseObject=False, requestType=None):

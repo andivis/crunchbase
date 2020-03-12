@@ -6,12 +6,22 @@ import time
 
 from datetime import datetime, timedelta
 
-from ..library import helpers
+if '--debug' in sys.argv:
+    import helpers as helpers
 
-from ..library.database import Database
-from ..library.api import Api
+    from database import Database
+    from api import Api
+    from other import Internet
 
-from ..library.helpers import get
+    from helpers import get
+else:
+    from ..library import helpers
+
+    from ..library.database import Database
+    from ..library.api import Api
+    from ..library.other import Internet
+
+    from ..library.helpers import get
 
 class Crunchbase:
     def runRepeatedly(self, inputRows):
@@ -108,6 +118,8 @@ class Crunchbase:
         helpers.appendCsvFile(values, outputFile)
 
     def search(self, inputRow):
+        self.api.proxies = self.internet.getRandomProxy()
+        
         if not inputRow:
             return
 
@@ -209,14 +221,9 @@ class Crunchbase:
         self.options = options
         self.log = logging.getLogger(get(self.options, 'loggerName'))
 
-        self.database = Database('user-data/database.sqlite')
-        self.database.makeTables('program/resources/tables.json')
+        self.database = Database('program/resources/tables.json')
 
-        self.maximumRequestsPerHour = 3600                        
-
-    def __init__(self, options, credentials):
-        self.options = options
-        self.log = logging.getLogger(get(self.options, 'loggerName'))
         self.api = Api('', self.options)
-        self.database = Database('user-data/database.sqlite')
-        self.database.makeTables('program/resources/tables.json')
+        self.internet = Internet(self.options)
+
+        self.maximumRequestsPerHour = 3600
