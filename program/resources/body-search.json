@@ -23,11 +23,11 @@
         },
         {
             "type": "predicate",
-            "field_id": "founded_on",
+            "field_id": "rank_org",
             "operator_id": "between",
             "values": [
-                "1/1/20",
-                "2/1/20"
+                5000,
+                5500
             ]
         }
     ],

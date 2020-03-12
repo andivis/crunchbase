@@ -264,13 +264,15 @@ class Crunchbase:
                 'crunchbase.com'
             ]
 
+        afterId = ''
+
         for searchSite in searchSites:
-            success = self.searchUsingSite(inputRow, searchSite)
+            success = self.searchUsingSite(inputRow, searchSite, afterId)
 
             if success:
                 break
 
-    def searchUsingSite(self, inputRow, searchSite):
+    def searchUsingSite(self, inputRow, searchSite, afterId):
         result = False
         
         self.api.proxies = self.internet.getRandomProxy()
@@ -296,6 +298,9 @@ class Crunchbase:
                 toSend = helpers.getJsonFile('program/resources/body-search.json')
                 
                 toSend['query'][0]['values'][0] = keyword
+
+                if afterId:
+                    toSend["after_id"] = afterId
 
                 toSend = json.dumps(toSend)
 
