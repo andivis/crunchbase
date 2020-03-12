@@ -118,7 +118,7 @@ class Crunchbase:
                 
                 printableFields.append(printableName)
             
-            #debug helpers.toFile(','.join(printableFields), outputFile)
+            helpers.toFile(','.join(printableFields), outputFile)
 
     def getProfile(self, url):
         result = {}
@@ -142,7 +142,7 @@ class Crunchbase:
             if isMain:
                 result = self.getMainInformation(dictionary)
 
-            helpers.toFile(json.dumps(dictionary, indent=4), f'user-data/logs/j{i}.json')
+            #debug helpers.toFile(json.dumps(dictionary, indent=4), f'user-data/logs/j{i}.json')
         
         return result
 
@@ -178,12 +178,14 @@ class Crunchbase:
 
         numberOfEmployees = helpers.getNested(dictionary, ['cards', 'overview_fields', 'num_employees_enum'])
         numberOfEmployees = helpers.findBetween(numberOfEmployees, 'c_', '')
-        numberOfEmployees = helpers.findBetween(numberOfEmployees, '_', ' to ')
+        numberOfEmployees = numberOfEmployees.replace('_', ' to ')
 
         fundingRoundsStrings = []
-        
+
+        fundingRounds = helpers.getNested(dictionary, ['cards', 'funding_rounds_list'])
+
         for fundingRound in fundingRounds:
-            date = get(employee, 'announced_on')
+            date = get(fundingRound, 'announced_on')
             
             name = helpers.getNested(fundingRound, ['identifier', 'value'])
             
@@ -194,7 +196,7 @@ class Crunchbase:
 
             currency = helpers.getNested(fundingRound, ['money_raised', 'currency'])
 
-            string = f'{date} {name}: {money} {currency})'
+            string = f'{date} {name}: {money} {currency}'
 
             fundingRoundsStrings.append(string)
 
@@ -213,15 +215,15 @@ class Crunchbase:
             'email': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'contact_email']),
             'linkedin': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'linkedin', 'value']),
             'phone': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'phone_number']),
-            'founded': helpers.getNested(dictionary, ['cards', 'overview_fields', 'founded_on']),
+            'founded': helpers.getNested(dictionary, ['cards', 'overview_fields', 'founded_on', 'value']),
             'operatingStatus': helpers.getNested(dictionary, ['cards', 'overview_fields', 'operating_status']),
             'fundingStatus': helpers.getNested(dictionary, ['cards', 'overview_fields', 'funding_stage']),
             'fundingType': helpers.getNested(dictionary, ['cards', 'overview_fields', 'last_funding_type']),
             'crunchbaseUrl': 'https://www.crunchbase.com/organization/' + helpers.getNested(dictionary, ['properties', 'identifier', 'permalink']),
             'employees': employees,
             'numberOfEmployees': numberOfEmployees,
-            'fundingTotal': helpers.getNested(dictionary, ['cards', 'funding_rounds_list', 'value']),
-            'currency': helpers.getNested(dictionary, ['cards', 'funding_rounds_list', 'currency']),
+            'fundingTotal': helpers.getNested(dictionary, ['cards', 'funding_rounds_headline', 'funding_total', 'value']),
+            'currency': helpers.getNested(dictionary, ['cards', 'funding_rounds_headline', 'funding_total', 'currency']),
             'fundingRounds': fundingRounds,
             'json': dictionary
         }
