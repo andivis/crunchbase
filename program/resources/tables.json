@@ -1,0 +1,28 @@
+{
+    "result": {
+        "columns": {
+            "id": "integer",
+            "searchTerm": "text",
+            "name": "text",
+            "city": "text",
+            "region": "text",
+            "country": "text",
+            "gmDate": "text",
+            "json": "text"
+        },
+        "primaryKeys": [
+            "id"
+        ]
+    },
+    "history": {
+        "columns": {
+            "id": "integer",
+            "gmDate": "text",
+            "gmDateCompleted": "text",
+            "json": "text"
+        },
+        "primaryKeys": [
+            "id"
+        ]
+    }
+}
