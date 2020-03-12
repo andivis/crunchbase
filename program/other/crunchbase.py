@@ -6,12 +6,16 @@ import time
 
 from datetime import datetime, timedelta
 
+# pip packages
+import lxml.html as lh
+
 if '--debug' in sys.argv:
     import helpers as helpers
 
     from database import Database
     from api import Api
     from other import Internet
+    from website import Website
 
     from helpers import get
 else:
@@ -20,6 +24,7 @@ else:
     from ..library.database import Database
     from ..library.api import Api
     from ..library.other import Internet
+    from ..library.website import Website
 
     from ..library.helpers import get
 
@@ -29,6 +34,8 @@ class Crunchbase:
 
         if '--debug' in sys.argv:
             self.database.execute(f'delete from result')
+
+        profile = self.getProfile('/organization/monzo')
 
         while True:
             self.run(inputRows)
@@ -117,6 +124,77 @@ class Crunchbase:
         # this quote fields that contain commas
         helpers.appendCsvFile(values, outputFile)
 
+    def getProfile(self, url):
+        result = {}
+        
+        document = self.getDocument(url)
+        
+        title = self.website.getXpath('', "//title", True, None, document)
+        
+        jsonElements = self.website.getXpath('', "//script[@type = 'application/ld+json' or @type = 'application/json']", False, None, document)
+
+        for i, jsonElement in enumerate(jsonElements):
+            text = jsonElement.text_content()
+
+            isMain = False
+
+            if '&q;' in text:
+                text = text.replace('&q;', '"')
+
+                isMain = True
+            
+            dictionary = json.loads(text)
+
+            if isMain:
+                dictionary = getMainInformation(dictionary)
+
+            helpers.toFile(json.dumps(dictionary, indent=4), f'user-data/logs/j{i}.json')
+        
+        return result
+
+    def getMainInformation(dictionary):
+        dictionary = get(dictionary, 'HttpState')
+
+        found = False
+
+        for key in dictionary:
+            if key.startswith('GET/'):
+                dictionary = helpers.getNested(dictionary, [key, 'data'])
+                found = True
+                break
+
+        if not found:
+            return {}
+
+        locations = helpers.getNested(dictionary, ['cards', 'overview_image_description', 'location_identifiers'])
+
+        result = {
+            'id': helpers.getNested(dictionary, ['properties', 'identifier', 'uuid']),
+            'name': helpers.getNested(dictionary, ['properties', 'title']),
+            'legalName': helpers.getNested(dictionary, ['cards', 'overview_fields', 'legal_name']),
+            'crunchbaseUrl': 'https://www.crunchbase.com/organization/' + helpers.getNested(dictionary, ['properties', 'identifier', 'permalink']),
+            'city': self.findByValue(locations, 'location_type', 'city', 'value'),
+            'region': self.findByValue(locations, 'location_type', 'region', 'value'),
+            'country': self.findByValue(locations, 'location_type', 'country', 'value'),
+            'short_description': helpers.getNested(dictionary, ['properties', 'short_description']),
+            'phone': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'phone']),
+            'email': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'contact_email']),
+            'linkedin': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'linkedin']),
+            'website': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'website']),
+            'fundingStatus': helpers.getNested(dictionary, ['cards', 'overview_fields', 'funding_stage']),
+            'fundingType': helpers.getNested(dictionary, ['cards', 'overview_fields', 'last_funding_type']),
+            'operatingStatus': helpers.getNested(dictionary, ['cards', 'overview_fields', 'operating_status']),
+        }
+
+        return result
+
+    def findByValue(self, dictionary, keyToFind, valueMustMatch, keyToReturn):
+        for key, value in dictionary.items():
+            if key == keyToFind and value == valueMustMatch:
+                return get(dictionary, keyToReturn)
+
+        return ''
+
     def search(self, inputRow):
         self.api.proxies = self.internet.getRandomProxy()
         
@@ -129,17 +207,7 @@ class Crunchbase:
             helpers.wait(3600)
             self.requestCount = 0
 
-        searchParameters = {
-            'keyword': get(inputRow, 'keyword'),
-        }
-
-        try:
-            searchResults = self.api.get('', searchParameters)
-        except Exception as e:
-            helpers.handleException(e)
-
-            self.log.info(f'Reached maximum requests per hour. Waiting 1 hour.')
-            helpers.wait(3600,)
+        searchResults = self.api.get('', None, False)
 
         self.requestCount += 1
 
@@ -196,6 +264,11 @@ class Crunchbase:
         }
 
         self.database.insert('result', newRow)
+
+    def getDocument(self, url):
+        response = self.api.get(url, None, False, True)
+        document = lh.fromstring(response.content)
+        return document
     
     def markDone(self, inputRow, newSearchResults):
         if not newSearchResults:
@@ -223,7 +296,9 @@ class Crunchbase:
 
         self.database = Database('program/resources/tables.json')
 
-        self.api = Api('', self.options)
+        self.api = Api('https://www.crunchbase.com', self.options)
+        self.api.setHeadersFromHarFile('program/resources/headers.txt', '')
         self.internet = Internet(self.options)
+        self.website = Website(self.options)
 
         self.maximumRequestsPerHour = 3600

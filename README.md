@@ -2,7 +2,7 @@
 
 ## Installation
 
-1. If you're on Windows, you can go to this repository url, click `clone or download`, `download zip`.
+1. If you're on Windows, you can go to this repository url, click `clone or download` then `download zip`.
 
     Extract the zip file on your computer, enter the folder you extracted, double click `main.bat`.
     
