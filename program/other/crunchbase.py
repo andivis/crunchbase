@@ -35,8 +35,6 @@ class Crunchbase:
         if '--debug' in sys.argv:
             self.database.execute(f'delete from result')
 
-        profile = self.getProfile('/organization/monzo')
-
         while True:
             self.run(inputRows)
             self.waitForNextRun()
@@ -45,9 +43,15 @@ class Crunchbase:
         self.requestCount = 0
         self.newSearchResultsCount = 0
 
+        self.getReady()
+
         for i, inputRow in enumerate(inputRows):
             try:
                 self.log.info(f'On item {i + 1} of {len(inputRows)}: {get(inputRow, "POSTCODE")}: {get(inputRow, "VIEW_NAME")}')
+
+                profile = self.getProfile('/organization/monzo')
+                self.output(inputRow, profile)
+
                 self.search(inputRow)
 
                 if self.options['searchResultLimit'] and i >= self.options['searchResultLimit']:
@@ -55,34 +59,53 @@ class Crunchbase:
             except Exception as e:
                 helpers.handleException(e)
 
-            self.outputNewResults(inputRow)
-
-    def outputNewResults(self, inputRow):
-        self.log.info('Writing to csv file')
-
-        outputFile = self.options['outputDirectory'] + '/' + self.gmDateStarted.strftime('%Y-%m-%d') + '.csv'
-
-        # to avoid duplicates
-        helpers.removeFile(outputFile)
-
-        rows = self.database.get('result', '*', f"gmDate >= '{self.gmDateStarted}'",  'price', 'asc')
-
-        for row in rows:
-            self.outputResult(inputRow, row, outputFile)
-
-    def outputResult(self, inputRow, newItem, outputFile):
-        if not get(newItem, 'id'):
+    def output(self, inputRow, newResult):
+        if not get(newResult, 'id'):
             return
 
-        helpers.makeDirectory(os.path.dirname(outputFile))
+        self.storeToDatabase(inputRow, newResult)
 
-        fields = ['gmDate', 'name', 'city', 'region', 'country', 'id', 'url']
+        self.log.info('Writing to csv file')
 
-        printableNames = {
-            'gmDate': 'date found'
-        }
+        outputFile = self.options['outputFile']
 
+        ignoreColumns = [
+            'json'
+        ]
+
+        fields = list(newResult.keys())
+
+        for ignoreColumn in ignoreColumns:
+            fields.remove(ignoreColumn)
+
+        self.writeHeaders(fields, outputFile)
+
+        values = []
+
+        otherValues = {}
+
+        for field in fields:
+            value = ''
+
+            if get(otherValues, field):
+                value = get(otherValues, field)
+            else:
+                value = get(newResult, field)
+
+            if not value:
+                value = helpers.getNested(newResult, ['json', field])
+
+            values.append(value)
+
+        # this quotes fields that contain commas
+        helpers.appendCsvFile(values, outputFile)
+
+    def writeHeaders(self, fields, outputFile):
         if not os.path.exists(outputFile):
+            printableNames = {
+                'gmDate': 'date found'
+            }
+
             printableFields = []
             
             for field in fields:
@@ -95,41 +118,12 @@ class Crunchbase:
                 
                 printableFields.append(printableName)
             
-            helpers.toFile(','.join(printableFields), outputFile)
-
-
-        if f',{get(newItem, "id")},' in helpers.getFile(outputFile):
-            self.log.debug('Skipping. Already in the output file')
-            return
-
-        values = []
-
-        jsonColumn = json.loads(get(newItem, 'json'))
-
-        otherValues = {}
-
-        for field in fields:
-            value = ''
-
-            if get(otherValues, field):
-                value = get(otherValues, field)
-            else:
-                value = get(newItem, field)
-
-            if not value:
-                value = get(jsonColumn, field)
-
-            values.append(value)
-
-        # this quote fields that contain commas
-        helpers.appendCsvFile(values, outputFile)
+            #debug helpers.toFile(','.join(printableFields), outputFile)
 
     def getProfile(self, url):
         result = {}
         
         document = self.getDocument(url)
-        
-        title = self.website.getXpath('', "//title", True, None, document)
         
         jsonElements = self.website.getXpath('', "//script[@type = 'application/ld+json' or @type = 'application/json']", False, None, document)
 
@@ -146,13 +140,13 @@ class Crunchbase:
             dictionary = json.loads(text)
 
             if isMain:
-                dictionary = getMainInformation(dictionary)
+                result = self.getMainInformation(dictionary)
 
             helpers.toFile(json.dumps(dictionary, indent=4), f'user-data/logs/j{i}.json')
         
         return result
 
-    def getMainInformation(dictionary):
+    def getMainInformation(self, dictionary):
         dictionary = get(dictionary, 'HttpState')
 
         found = False
@@ -168,30 +162,77 @@ class Crunchbase:
 
         locations = helpers.getNested(dictionary, ['cards', 'overview_image_description', 'location_identifiers'])
 
+        employees = helpers.getNested(dictionary, ['cards', 'current_employees_featured_order_field'])
+
+        employeeStrings = []
+        
+        for employee in employees:
+            name = helpers.getNested(employee, ['person_identifier', 'value'])
+            title = get(employee, 'title')
+
+            string = f'{name} ({title})'
+
+            employeeStrings.append(string)
+
+        employees = '; '.join(employeeStrings)
+
+        numberOfEmployees = helpers.getNested(dictionary, ['cards', 'overview_fields', 'num_employees_enum'])
+        numberOfEmployees = helpers.findBetween(numberOfEmployees, 'c_', '')
+        numberOfEmployees = helpers.findBetween(numberOfEmployees, '_', ' to ')
+
+        fundingRoundsStrings = []
+        
+        for fundingRound in fundingRounds:
+            date = get(employee, 'announced_on')
+            
+            name = helpers.getNested(fundingRound, ['identifier', 'value'])
+            
+            money = helpers.getNested(fundingRound, ['money_raised', 'value'])
+
+            if money:
+                money = helpers.compactNumber(money)
+
+            currency = helpers.getNested(fundingRound, ['money_raised', 'currency'])
+
+            string = f'{date} {name}: {money} {currency})'
+
+            fundingRoundsStrings.append(string)
+
+        fundingRounds = '; '.join(fundingRoundsStrings)
+
         result = {
+            'gmDate': str(datetime.utcnow()),
             'id': helpers.getNested(dictionary, ['properties', 'identifier', 'uuid']),
             'name': helpers.getNested(dictionary, ['properties', 'title']),
             'legalName': helpers.getNested(dictionary, ['cards', 'overview_fields', 'legal_name']),
-            'crunchbaseUrl': 'https://www.crunchbase.com/organization/' + helpers.getNested(dictionary, ['properties', 'identifier', 'permalink']),
             'city': self.findByValue(locations, 'location_type', 'city', 'value'),
             'region': self.findByValue(locations, 'location_type', 'region', 'value'),
             'country': self.findByValue(locations, 'location_type', 'country', 'value'),
-            'short_description': helpers.getNested(dictionary, ['properties', 'short_description']),
-            'phone': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'phone']),
+            'description': helpers.getNested(dictionary, ['properties', 'short_description']),
+            'website': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'website', 'value']),
             'email': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'contact_email']),
-            'linkedin': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'linkedin']),
-            'website': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'website']),
+            'linkedin': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'linkedin', 'value']),
+            'phone': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'phone_number']),
+            'founded': helpers.getNested(dictionary, ['cards', 'overview_fields', 'founded_on']),
+            'operatingStatus': helpers.getNested(dictionary, ['cards', 'overview_fields', 'operating_status']),
             'fundingStatus': helpers.getNested(dictionary, ['cards', 'overview_fields', 'funding_stage']),
             'fundingType': helpers.getNested(dictionary, ['cards', 'overview_fields', 'last_funding_type']),
-            'operatingStatus': helpers.getNested(dictionary, ['cards', 'overview_fields', 'operating_status']),
+            'crunchbaseUrl': 'https://www.crunchbase.com/organization/' + helpers.getNested(dictionary, ['properties', 'identifier', 'permalink']),
+            'employees': employees,
+            'numberOfEmployees': numberOfEmployees,
+            'fundingTotal': helpers.getNested(dictionary, ['cards', 'funding_rounds_list', 'value']),
+            'currency': helpers.getNested(dictionary, ['cards', 'funding_rounds_list', 'currency']),
+            'fundingRounds': fundingRounds,
+            'json': dictionary
         }
 
         return result
 
-    def findByValue(self, dictionary, keyToFind, valueMustMatch, keyToReturn):
-        for key, value in dictionary.items():
-            if key == keyToFind and value == valueMustMatch:
-                return get(dictionary, keyToReturn)
+    def findByValue(self, array, keyToFind, valueMustMatch, keyToReturn):
+        for dictionary in array:
+            for key, value in dictionary.items():
+                if key == keyToFind and value == valueMustMatch:
+                    return get(dictionary, keyToReturn)
 
         return ''
 
@@ -225,9 +266,9 @@ class Crunchbase:
 
     def passesFilters(self, searchResult):
         result = True
-        
-        if get(searchResult, 'property_type') and get(searchResult, 'property_type') in self.options['ignorePropertyTypes']:
-            self.log.info(f'Skipping. Property type is {get(searchResult, "property_type")}.')
+
+        if f',{get(newResult, "id")},' in helpers.getFile(outputFile):
+            self.log.debug('Skipping. Already in the output file.')
             result = False
 
         if self.inDatabase(searchResult):
@@ -247,23 +288,20 @@ class Crunchbase:
         
         return result
 
-    def store(self, inputRow, searchResult):
-        jsonObject = searchResult
+    def storeToDatabase(self, inputRow, newResult):
+        if get(newResult, 'json'):
+            newResult['json'] = json.dumps(newResult['json'], indent=4)
 
-        jsonColumn = json.dumps(jsonObject, indent=4, sort_keys=False, default=str)
-        
-        newRow = {
-            'id': get(searchResult, 'listing_id'),
-            'searchTerm': get(inputRow, 'keyword'),
-            'name': get(searchResult, 'name'),
-            'city': get(searchResult, 'city'),
-            'region': get(searchResult, 'region'),
-            'country': get(searchResult, 'country'),
-            'gmDate': str(datetime.utcnow()),
-            'json': jsonColumn
-        }
+        self.database.insert('result', newResult)
 
-        self.database.insert('result', newRow)
+    def getReady(self):
+        helpers.makeDirectory(os.path.dirname(self.options['outputFile']))
+
+        # should restart or resume search from where left off?
+        if not self.options['resumeSearch'] and os.path.exists(self.options['outputFile']):
+            # move old output file
+            rotatedFileName = self.options['outputFile'] + '.old'
+            os.rename(self.options['outputFile'], rotatedFileName)
 
     def getDocument(self, url):
         response = self.api.get(url, None, False, True)

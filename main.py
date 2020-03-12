@@ -42,11 +42,12 @@ class Main:
         # set default options
         self.options = {
             'inputFile': 'user-data/input/input.csv',
-            'outputDirectory': 'user-data/output',
+            'outputFile': 'user-data/output/output.csv',
             'proxyListUrl': 'program/resources/resource',
             'hoursBetweenRuns': 7 * 24,
             'loggerName': self.log.name,
             'searchResultLimit': 100 * 1000,
+            'resumeSearch': 1
         }
 
         optionsFileName = helpers.getParameter('--optionsFile', False, 'user-data/options.ini')
