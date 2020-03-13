@@ -54,6 +54,7 @@ class Main:
             'secondsBetweenProfiles': 0,
             'loggerName': self.log.name,
             'searchResultLimit': -1,
+            'customFilterStep': 0,
             'randomizeUserAgent': 1,
             'resumeSearch': 1,
             'refreshOnly': 0,

@@ -298,8 +298,8 @@ class Crunchbase:
         self.maximumFilterValue = 100 * 1000
         self.filterStep = 10 * 1000
 
-        if '--debug' in sys.argv:
-            self.filterStep = 100
+        if '--debug' in sys.argv or self.options['customFilterStep']:
+            self.filterStep = self.options['customFilterStep']
             self.maximumFilterValue = self.filterStep * 3
 
         if self.options['refreshOnly']:
