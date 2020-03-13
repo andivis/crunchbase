@@ -52,6 +52,10 @@
 3. Run `python3 main.py`. Depending on your system you may need run `python main.py` instead.
 4. The output will be in `user-data/output/output.csv` and `user-data/database.sqlite`.
 
+## Command line parameters
+
+- `--refresh`: refresh results that are already in the database. Add companies that were founded recently. This reduces the number of searches you need to do.
+
 ## Options
 
 `user-data/options.ini` accepts the following options:
