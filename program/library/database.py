@@ -33,7 +33,7 @@ class Database:
         except Exception as e:
             self.handleException(e)
 
-    def get(self, table, columns, where, orderBy, orderType, limit=None):
+    def get(self, table, columns, where, orderBy=None, orderType=None, limit=None):
         result = []
 
         wherePart = ''
@@ -202,7 +202,7 @@ class Database:
             self.cursor.close()
             self.connection.close()
 
-    def __init__(self, name=None, type='sqlite'):
+    def __init__(self, tablesFile=None, name='user-data/database.sqlite', type='sqlite'):
         self.type = type
         self.connection = None
         self.cursor = None
@@ -213,3 +213,6 @@ class Database:
             self.stringKeyType = 'varchar(100)'
         
         self.open(name)
+
+        if tablesFile:
+            self.makeTables(tablesFile)

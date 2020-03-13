@@ -11,12 +11,22 @@ from collections import OrderedDict
 # pip packages
 import lxml.html as lh
 
-from . import helpers
+if '--debug' in sys.argv:
+    import helpers as helpers
 
-from .helpers import get
-from .api import Api
-from .website import Website
-from .database import Database
+    from api import Api
+    from website import Website
+    from database import Database
+
+    from helpers import get
+else:
+    from . import helpers
+    
+    from .helpers import get
+
+    from .api import Api
+    from .website import Website
+    from .database import Database
 
 class ContactUploader:
     def upload(self, inputRow, newItems):

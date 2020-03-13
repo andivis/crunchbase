@@ -5,12 +5,22 @@ import math
 # pip packages
 import lxml.html as lh
 
-from . import helpers
+if '--debug' in sys.argv:
+    import helpers as helpers
 
-from .helpers import get
-from .api import Api
-from .website import Website
-from .other import Internet
+    from helpers import get
+
+    from api import Api
+    from website import Website
+    from other import Internet
+else:
+    from . import helpers
+    
+    from .helpers import get
+
+    from .api import Api
+    from .website import Website
+    from .other import Internet
 
 class Google:
     def search(self, query, numberOfResults=10, acceptAll=True, moreParameters={}):

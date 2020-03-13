@@ -4,6 +4,7 @@ import os.path
 import random
 import json
 import urllib.parse
+import requests
 
 from collections import OrderedDict
 
@@ -17,44 +18,29 @@ else:
     from .helpers import get
 
 class Api:
-    def get(self, url, parameters=None, responseIsJson=True, returnResponseObject=False, requestType=None):
-        import requests
+    def get(self, url, parameters=None, responseIsJson=True, returnResponseObject=False):
+        return self.request('GET', url, parameters, None, responseIsJson, returnResponseObject)
+    
+    def post(self, url, data, responseIsJson=True, returnResponseObject=False):
+        return self.request('POST', url, None, data, responseIsJson, returnResponseObject)
 
+    def request(self, requestType, url, parameters=None, data=None, responseIsJson=True, returnResponseObject=False):
         result = ''
 
         if responseIsJson:
             result = {}
 
+        self.log.debug(f'{requestType} {url}')
+
+        cacheResponse = self.handleDebug(requestType, url, parameters, data, responseIsJson, returnResponseObject)
+
+        if cacheResponse:
+            return cacheResponse
+
         try:
-            self.log.debug(f'Get {url}')
+            response = requests.request(requestType, self.urlPrefix + url, params=parameters, headers=self.headers, data=data, proxies=self.proxies, timeout=self.timeout, verify=self.verify)
 
-            verify = True
-            
-            fileName = ''
-            
-            if '--debug' in sys.argv:
-                self.log.debug(f'Request headers: {self.headers}')
-
-                if self.proxies and 'localhost:' in self.proxies.get('http', ''):
-                    verify = False
-
-                fileName = self.getCacheFileName(url, parameters, responseIsJson)
-
-                if not returnResponseObject and not '--noCache' in sys.argv and os.path.exists(fileName):
-                    self.log.debug('Using cached version')
-                    result = helpers.getFile(fileName)
-
-                    if responseIsJson:
-                        return json.loads(result)
-                    else:
-                        return result
-
-            if requestType == 'DELETE':
-                response = requests.delete(self.urlPrefix + url, params=parameters, headers=self.headers, proxies=self.proxies, timeout=self.timeout, verify=verify)
-            else:
-                response = requests.get(self.urlPrefix + url, params=parameters, headers=self.headers, proxies=self.proxies, timeout=self.timeout, verify=verify)
-
-            self.handleResponseLog(url, parameters, response, fileName)
+            self.handleResponseLog(requestType, url, parameters, data, response)
             
             if returnResponseObject:
                 result = response
@@ -97,44 +83,6 @@ class Api:
 
         return result
 
-    def post(self, url, data, responseIsJson=True):
-        import requests
-        
-        result = {}
-
-        if not responseIsJson:
-            result = ''
-
-        try:
-            self.log.debug(f'Post {url}')
-
-            verify = True
-            
-            fileName = ''
-            
-            if '--debug' in sys.argv:
-                self.log.debug(f'Request headers: {self.headers}')
-                self.log.debug(f'Request body: {data}')
-                
-                if self.proxies and 'localhost:' in self.proxies.get('http', ''):
-                    verify = False
-                
-                # don't want to read files for post, just write them
-                fileName = self.getCacheFileName(url, {}, responseIsJson)
-
-            response = requests.post(self.urlPrefix + url, headers=self.headers, proxies=self.proxies, data=data, timeout=self.timeout, verify=verify)
-
-            self.handleResponseLog(url, {}, response, fileName)
-
-            if responseIsJson:
-                result = json.loads(response.text)
-            else:
-                result = response.text
-        except Exception as e:
-            helpers.handleException(e)
-
-        return result
-
     def downloadBinaryFile(self, url, destinationFileName):       
         result = False
         
@@ -150,11 +98,57 @@ class Api:
         
         return result
 
-    def handleResponseLog(self, url, parameters, response, fileName):
+    def handleDebug(self, requestType, url, parameters, data, responseIsJson, returnResponseObject):
+        if not '--debug' in sys.argv:
+            return None
+
+        self.cacheFileName = ''
+
+        if requestType == 'POST' and not self.cachePostRequests:
+            return None
+       
+        self.log.debug(f'Request headers: {self.headers}')
+        self.log.debug(f'Request body: {data}')
+
+        if self.proxies and 'localhost:' in self.proxies.get('http', ''):
+            self.verify = False
+
+        self.cacheFileName = self.getCacheFileName(url, parameters, data, responseIsJson)
+
+        return self.getCacheResponse(responseIsJson, returnResponseObject)
+
+    def getCacheResponse(self, responseIsJson, returnResponseObject):
+        if '--noCache' in sys.argv or not os.path.exists(self.cacheFileName):
+            return None
+
+        self.log.debug('Using cached version')
+
+        result = helpers.getFile(self.cacheFileName)
+        
+        if returnResponseObject:
+            content = helpers.getBinaryFile(self.cacheFileName)
+
+            from types import SimpleNamespace
+            d = {
+                'content': content,
+                'text': result,
+                'status_code': 200
+            }
+            
+            n = SimpleNamespace(**d)
+            
+            return n
+        elif responseIsJson:
+            return json.loads(result)
+        else:
+            return result
+
+    def handleResponseLog(self, requestType, url, parameters, data, response):
         if not response:
             self.log.debug(f'Something went wrong with the response. Response: {response}.')
             return
                 
+        self.log.debug(f'Response code: {response.status_code}')
         self.log.debug(f'Response headers: {response.headers}')
 
         if response.text != None:
@@ -163,23 +157,28 @@ class Api:
         if '--debug' in sys.argv and ('maps.google' in self.urlPrefix and 'INVALID_REQUEST' in response.text):
             return
 
+        helpers.makeDirectory('user-data/logs/cache')
+
         if '--debug' in sys.argv:
+            helpers.toBinaryFile(response.content, self.cacheFileName)
+
             parameterString = ''
 
             if parameters:
                 parameterString += '?' + urllib.parse.urlencode(parameters)
-            
-            helpers.toBinaryFile(response.content, fileName)
+
+            urlForFile = f'{self.urlPrefix}{url}{parameterString}'
+
+            if data:
+                urlForFile += f'?hashOfData={helpers.hash(data)}'
 
             # avoid duplicates when using returnResponseObject
-            if not f' {self.urlPrefix}{url}{parameterString}' in helpers.getFile('user-data/logs/cache.txt'):
-                helpers.appendToFile(f'{fileName} {self.urlPrefix}{url}{parameterString}', 'user-data/logs/cache.txt')
+            if not f' {urlForFile}' in helpers.getFile('user-data/logs/cache.txt'):               
+                helpers.appendToFile(f'{self.cacheFileName} {urlForFile}', 'user-data/logs/cache.txt')
         # normal log
         else:
             number = '{:02d}'.format(self.requestIndex)
             
-            helpers.makeDirectory('user-data/logs/cache')
-
             fileName = f'user-data/logs/cache/{helpers.lettersAndNumbersOnly(self.urlPrefix)}-{number}.json'
             
             self.requestIndex += 1
@@ -190,7 +189,7 @@ class Api:
             self.log.debug(f'Writing response to {fileName}')
             helpers.toBinaryFile(response.content, fileName)
 
-    def getCacheFileName(self, url, parameters, responseIsJson):
+    def getCacheFileName(self, url, parameters, data, responseIsJson):
         result = ''
 
         file = helpers.getFile('user-data/logs/cache.txt')
@@ -199,6 +198,9 @@ class Api:
        
         if parameters:
             urlToFind += '?' + urllib.parse.urlencode(parameters)
+
+        if data:
+            urlToFind += f'?hashOfData={helpers.hash(data)}'
 
         for line in file.splitlines():
             fileName = helpers.findBetween(line, '', ' ')
@@ -221,8 +223,6 @@ class Api:
                 extension = 'html'
 
             result = f'user-data/logs/cache/{fileName}.{extension}'
-
-        helpers.makeDirectory('user-data/logs/cache')
 
         return result
 
@@ -297,13 +297,13 @@ class Api:
                 # ignore pseudo-headers
                 if name.startswith(':'):
                     continue
-
-                if name.lower() == 'content-length' or name.lower() == 'host':
+                elif name.lower() == 'content-length' or name.lower() == 'host':
                     continue
-
                 # otherwise response will stay compressed and unreadable
-                if name.lower() == 'accept-encoding' and not self.hasBrotli:
+                elif name.lower() == 'accept-encoding' and not self.hasBrotli:
                     value = value.replace(', br', '')
+                elif name.lower() == 'user-agent' and get(self.options, 'randomizeUserAgent'):
+                    value = random.choice(self.userAgentList)
 
                 newHeader = (name, value)
 
@@ -346,17 +346,24 @@ class Api:
         self.headers = self.getHeadersFromFile(f'resources/headers-{number}.txt')
 
     def __init__(self, urlPrefix='', options=None):
+        self.options = options
         self.urlPrefix = urlPrefix
         self.timeout = 45
         self.requestIndex = 0
         self.log = logging.getLogger(get(options, 'loggerName'))
+        self.cacheFileName = ''
 
         self.randomizeHeaders()
 
+        if get(self.options, 'randomizeUserAgent'):
+            file = helpers.getFile('program/resources/user-agents.txt')
+            self.userAgentList = file.splitlines()
+
         if not self.headers:
-            self.userAgentList = [
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36'
-            ]
+            if not self.userAgentList:
+                self.userAgentList = [
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36'
+                ]
 
             userAgent = random.choice(self.userAgentList)
 
@@ -367,7 +374,9 @@ class Api:
             ])
 
         self.proxies = None
+        self.verify = True
         self.hasBrotli = True
+        self.cachePostRequests = False
 
         try:
             import brotli

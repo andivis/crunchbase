@@ -1,11 +1,17 @@
+import sys
 import logging
 import random
 
 from collections import OrderedDict
 
-from . import helpers
+if '--debug' in sys.argv:
+    import helpers as helpers
 
-from .helpers import get
+    from helpers import get
+else:
+    from . import helpers
+    
+    from .helpers import get
 
 class Website:
     def getXpath(self, page, xpath, firstOnly=False, attribute=None, document=None, strip=True):

@@ -76,7 +76,7 @@ def getLines(fileName):
 
 def toFile(s, fileName):
     with io.open(fileName, "w", encoding="utf-8") as text_file:
-        print(s, file=text_file)
+        print(s, file=text_file, end = '')
 
 
 def toBinaryFile(s, fileName):
@@ -142,6 +142,16 @@ def lettersAndSpacesOnly(s):
     return ''.join(filter(lambda x: x.isalpha() or x == ' ', s))
 
 
+def compactNumber(num):
+    num = int(num)
+
+    magnitude = 0
+    while abs(num) >= 1000:
+        magnitude += 1
+        num /= 1000.0
+    # add more suffixes if you need them
+    return '%.0f%s' % (num, ['', 'K', 'M', 'G', 'T', 'P'][magnitude])
+
 def fixedDecimals(n, numberOfDecimalPlaces):
     result = ''
 
@@ -154,6 +164,12 @@ def fixedDecimals(n, numberOfDecimalPlaces):
 
     return result
 
+def getPrintableName(s, character=' '):
+    result = addBeforeCapitalLetters(s).lower()
+
+    result = result.replace('_', ' ');
+
+    return result
 
 def findBetween(s, first, last, strict=False):
     start = 0
@@ -425,6 +441,15 @@ def setOptions(fileName, options, sectionName='main'):
         handleException(e)
 
 
+def setOptionFromParameter(parameterName, optionName, options):
+    value = getParameter(parameterName, False)
+
+    if value:
+        if isinstance(get(options, optionName), int):
+            options[optionName] = int(value)
+        else:
+            options[optionName] = value
+
 def getParameterIfExists(self, existingValue, parameterName):
     result = existingValue
 
@@ -598,6 +623,15 @@ def setUpLogging(directory='logs', fileNameSuffix='', useDatabase=False, loggerN
         'sqliteHandler': sqliteHandler
     }
 
+def setLogPrefix(logger, string):
+    for handler in logger.parent.handlers:
+        if not handler.__class__.__name__ == 'StreamHandler':
+            formatter = logging.Formatter(f'[%(threadName)s][%(asctime)s][%(levelname)s][{string}] %(message)s', '%Y-%m-%d %H:%M:%S')
+        else:
+            formatter = logging.Formatter(f'[%(asctime)s][%(levelname)s][{string}]\n%(message)s\n', '%H:%M:%S')
+
+        handler.setFormatter(formatter)
+
 def getDateStringSecondsAgo(secondsAgo, useGmTime):
     now = None
 
@@ -655,12 +689,15 @@ def waitUntil(date):
     seconds = difference.total_seconds()
     hours = difference.total_seconds() / 3600
 
-    logging.info(f'Waiting until {date} GMT ({hours} from now)')
+    printableDate = date.strftime('%Y-%m-%d %H:%M:%S')
+    printableHours = fixedDecimals(hours, 2)
+
+    logging.info(f'Waiting until {printableDate} GMT ({printableHours} hours from now)')
 
     if '--debug' in sys.argv:
         seconds = 3
 
-    time.sleep(seconds)
+    wait(seconds)
 
 def getDomainName(url):
     result = ''
@@ -736,3 +773,12 @@ def replaceVariables(string, variables, surround=''):
 
     return result
     
+def hash(string):
+    if string == None:
+        return ''
+        
+    import hashlib
+
+    result = hashlib.md5(string.encode('utf-8')).hexdigest()
+
+    return str(result)
