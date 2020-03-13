@@ -414,6 +414,8 @@ class Crunchbase:
                     self.maximumRank = 0 + ((self.filterIndex + 1) * self.filterStep)
                     self.maximumRank = self.maximumRank - 1
 
+                    self.setLogPrefix(inputRow)
+
                     toSend['query'][1]['values'] = [self.minimumRank, self.maximumRank]
 
                 if self.afterId:
