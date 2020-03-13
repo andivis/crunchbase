@@ -632,8 +632,12 @@ class Crunchbase:
         if response and 'verify you are a human' in response.text:
             self.log.error('There is a captcha')
             return None
+
+        if response == '' or not response or not response.content:
+            return None
         
         document = lh.fromstring(response.content)
+        
         return document
 
     def isDone(self):

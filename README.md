@@ -2,13 +2,7 @@
 
 ## Installation
 
-1. If you're on Windows, you can go to this repository url, click `clone or download` then `download zip`.
-
-    Extract the zip file on your computer, enter the folder you extracted, double click `main.bat`.
-    
-    Otherwise do the steps below.
-
-2. Make sure Python 3.8 or higher and git are installed.
+1. Make sure Python 3.8 or higher and git are installed.
 
     Windows:
 
@@ -38,13 +32,13 @@
     sudo apt install -y git
     ```
 
-3. Open a terminal/command prompt window. Run the following command.
+2. Open a terminal/command prompt window. Run the following command.
 
     ```
     git clone (repository url)
     ```
 
-4. Run the following commands in the same terminal/command prompt window you just opened. Depending on your system you may need run `pip` instead of `pip3`.
+3. Run the following commands in the same terminal/command prompt window you just opened. Depending on your system you may need run `pip` instead of `pip3`.
 
     ```
     cd (repository name)
@@ -53,6 +47,16 @@
 
 ## Instructions
 
-1. On Windows you can simply double click `main.bat`. Otherwise do the following step.
+1. Save your .har as `user-data/credentials/www.crunchbase.com.har` as shown in the video.
+2. Optionally, put your proxy list into `user-data/proxies.csv`. The header must contain `url,port,username,password`. The other lines follow that format. See `user-data/proxies.sample.csv` for an example.
+3. Run `python3 main.py`. Depending on your system you may need run `python main.py` instead.
+4. The output will be in `user-data/output/output.csv` and `user-data/database.sqlite`.
 
-2. Run `python3 main.py`. Depending on your system you may need run `python main.py` instead.
+## Options
+
+`user-data/options.ini` accepts the following options:
+
+- `runRepeatedly`: 1 means run repeatedly every x hours. 0 means run only once. Default: 1.
+- `hoursBetweenRuns`: How many hours to wait between runs. Default: 168.
+- `searchResultLimit`: Stop once get this many search results for a given line in input.csv. Default: 0, which means no limit.
+- `resumeSearch`: 0 means only run if haven't run in `hoursBetweenRuns` hours. 1 means to run regardless of when completed last time. Default: 1.
