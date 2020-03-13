@@ -3,6 +3,7 @@ import sys
 import logging
 import json
 import time
+import random
 
 from datetime import datetime, timedelta
 
@@ -32,6 +33,8 @@ else:
 
 class Crunchbase:
     def runRepeatedly(self, inputRows):
+        self.inputRows = inputRows
+
         while True:
             self.run(inputRows)
             self.waitForNextRun()
@@ -44,15 +47,11 @@ class Crunchbase:
         if self.isDone():
             return
 
-        for i, inputRow in enumerate(inputRows):
+        for self.inputRowIndex, self.inputRow in enumerate(inputRows):
             try:
-                self.searchResultsCount = 0
-                self.log.info(f'On item {i + 1} of {len(inputRows)}: {get(inputRow, "keyword")}')
+                self.log.info(f'On item {self.inputRowIndex + 1} of {len(inputRows)}: {get(self.inputRow, "keyword")}')
 
-                self.search(inputRow)
-
-                if self.options['searchResultLimit'] and i >= self.options['searchResultLimit']:
-                    break
+                self.search(self.inputRow)
             except Exception as e:
                 helpers.handleException(e)
 
@@ -132,6 +131,8 @@ class Crunchbase:
         self.api.setHeadersFromHarFile('program/resources/headers.json', '')
 
         result = {}
+
+        self.log.info(f'Getting profile for {self.getProfileId(url)}')
         
         document = self.getDocument(url)
 
@@ -170,6 +171,9 @@ class Crunchbase:
 
         if not found:
             return {}
+
+        if '--debug' in sys.argv:
+            helpers.toFile(json.dumps(dictionary), 'user-data/logs/j.json')
 
         locations = helpers.getNested(dictionary, ['cards', 'overview_image_description', 'location_identifiers'])
 
@@ -237,8 +241,11 @@ class Crunchbase:
             'fundingTotal': helpers.getNested(dictionary, ['cards', 'funding_rounds_headline', 'funding_total', 'value']),
             'currency': helpers.getNested(dictionary, ['cards', 'funding_rounds_headline', 'funding_total', 'currency']),
             'fundingRounds': fundingRounds,
+            'keyword': get(self.inputRow, 'keyword'),
             'json': dictionary
         }
+
+        self.log.info(f'Profile: {get(result, "name")}, {get(result, "legalName")}, {get(result, "city")}, {get(result, "description")[0:30]}...')
 
         return result
 
@@ -251,6 +258,8 @@ class Crunchbase:
         return ''
 
     def search(self, inputRow):
+        self.searchResultsCount = 0
+    
         if not get(inputRow, 'keyword'):
             return
 
@@ -265,10 +274,39 @@ class Crunchbase:
                 'crunchbase.com'
             ]
 
-        for searchSite in searchSites:
-            status = self.getPages(inputRow, searchSite)
-            
-            if status == 'should stop':
+        self.totalSearchResults = 0;
+
+        self.filterIndex = 0
+        self.maximumFilterValue = 1000 * 1000
+        self.filterStep = 10 * 1000
+
+        if '--debug' in sys.argv:
+            self.maximumFilterValue = self.filterStep * 3
+
+        self.totalSteps = self.maximumFilterValue // self.filterStep
+
+        if not get(inputRow, 'search type') == 'location':
+            self.totalSteps = 1
+
+        self.minimumRank = 0
+        self.maximumRank = 0
+
+        status = ''
+
+        for self.filterIndex in range(0, self.totalSteps):
+            self.log.info(f'Searching for {get(inputRow, "keyword")}. Search type: {get(inputRow, "search type")}.')
+
+            for searchSite in searchSites:
+                status = self.getPages(inputRow, searchSite)
+                
+                if status == 'should stop':
+                    break
+
+            # because these don't use filters
+            if not get(inputRow, 'search type') == 'location':
+                break
+
+            if self.reachedSearchLimit():
                 break
 
     def getPages(self, inputRow, searchSite):
@@ -279,6 +317,8 @@ class Crunchbase:
 
         while True:
             status = self.getSearchResultsPage(inputRow, searchSite)
+
+            self.pageIndex += 1
 
             # only want one result for google
             if searchSite == 'google.com':
@@ -293,11 +333,11 @@ class Crunchbase:
     def getSearchResultsPage(self, inputRow, searchSite):
         result = 'should continue'
 
+        self.setLogPrefix(inputRow)
+        
         if self.pageIndex > 0:
             self.log.info(f'Getting page {self.pageIndex + 1}')
 
-        self.pageIndex += 1
-        
         if searchSite == 'google.com':
             self.api.proxies = self.internet.getRandomProxy()
         else:
@@ -316,7 +356,9 @@ class Crunchbase:
         elif searchSite == 'crunchbase.com':
             # use crunchbase search as a backup
             if os.path.exists('user-data/credentials/www.crunchbase.com.har'):
+                self.api.options['randomizeUserAgent'] = 0
                 self.api.setHeadersFromHarFile('user-data/credentials/www.crunchbase.com.har', '/v4/data/searches/organizations?source=slug')
+                self.api.options['randomizeUserAgent'] = 1
             else:
                 self.api.setHeadersFromHarFile('program/resources/headers-search.json', '')
 
@@ -325,19 +367,36 @@ class Crunchbase:
                 
                 toSend['query'][0]['values'][0] = keyword
 
+                self.minimumRank = 0 + (self.filterIndex * self.filterStep)
+                
+                self.maximumRank = 0 + ((self.filterIndex + 1) * self.filterStep)
+                self.maximumRank = self.maximumRank - 1
+
+                toSend['query'][1]['values'] = [self.minimumRank, self.maximumRank]
+
                 if self.afterId:
                     toSend["after_id"] = self.afterId
 
                 toSend = json.dumps(toSend)
 
-                searchResults = self.api.post(f'/v4/data/searches/organizations?source=slug', toSend)
+                response = self.api.post(f'/v4/data/searches/organizations?source=slug', data=toSend, responseIsJson=False, returnResponseObject=True)
             else:
-                searchResults = self.api.get(f'/v4/data/autocompletes?query={keyword}&collection_ids=organizations&limit=25&source=topSearch')
+                response = self.api.get(f'/v4/data/autocompletes?query={keyword}&collection_ids=organizations&limit=25&source=topSearch', responseIsJson=False, returnResponseObject=True)
+
+            self.handleCaptcha(response)
+
+            if response and response.text:
+                searchResults = json.loads(response.text)
+
+            self.totalSearchResults = get(searchResults, 'count')
             
             self.waitBetweenRequests()
 
             searchResults = get(searchResults, 'entities')
 
+            if self.pageIndex == 0:
+                self.log.info(f'There are {self.totalSearchResults} results for this search')
+            
             self.log.debug(f'Found {len(searchResults)} results on this page')
 
             if get(inputRow, 'search type') == 'company':
@@ -374,27 +433,53 @@ class Crunchbase:
             if not get(inputRow, 'search type') == 'location':
                 # only want first result
                 break
-        
+
+            if self.reachedSearchLimit():
+                self.afterId = ''
+                result = 'should stop'
+                break
+
+        if get(inputRow, 'search type') == 'location' and self.searchResultsCount == self.totalSearchResults:
+            self.log.info('Reached end of search results')
+            self.afterId = ''
+            result = 'should stop'
+
         return result
 
     def handleSearchResult(self, inputRow, url, searchResult, searchSite):
         result = 'should continue'
 
+        self.searchResultsCount += 1            
+
         if not self.passesFilters(searchResult, searchSite):
             return result
 
-        # debug
-        self.searchResultsCount += 1            
-        self.log.info(f'Results: {self.searchResultsCount}. Result: {self.getProfileId(url)}.')
-        result = 'success'
-        return result
+        self.setLogPrefix(inputRow)
+
+        self.log.info(f'Name: {self.getProfileId(url)}.')
 
         profile = self.getProfile(url)
 
         self.output(inputRow, profile)
 
-        self.searchResultsCount += 1            
-        self.log.info(f'New results: {self.searchResultsCount}. Result: {get(profile, "name")}.')
+        return 'success'
+
+    def reachedSearchLimit(self):
+        result = False
+        
+        if self.options['searchResultLimit'] and self.searchResultsCount >= self.options['searchResultLimit']:
+            self.log.info(f'Stopping. Reached limit of {self.options["searchResultLimit"]} results')
+            result = True
+
+        return result
+
+    def setLogPrefix(self, inputRow):
+        line = f'Keyword {self.inputRowIndex + 1} of {len(self.inputRows)}: {get(self.inputRow, "keyword")}'
+        
+        if get(inputRow, 'search type') == 'location':
+            line += f'. Filter {self.filterIndex + 1} of {self.totalSteps}. Rank: {self.minimumRank} to {self.maximumRank}. Page: {self.pageIndex + 1}. Results: {self.searchResultsCount}.'
+        
+        helpers.setLogPrefix(self.log, line)
 
     def getProfileUrl(self, url):
         return 'https://www.crunchbase.com/organization/' + self.getProfileId(url)
@@ -435,6 +520,7 @@ class Crunchbase:
 
     def storeToDatabase(self, inputRow, newResult):
         if get(newResult, 'json'):
+            newResult['json']['inputRow'] = inputRow
             newResult['json'] = json.dumps(newResult['json'], indent=4)
 
         self.database.insert('result', newResult)
@@ -480,6 +566,21 @@ class Crunchbase:
 
         return result
 
+    def handleCaptcha(self, response):
+        if response == '' or response == None:
+            return
+
+        hasCaptcha = False
+
+        if response.status_code == 403:
+            hasCaptcha = True
+        elif response.text and 'verify you are a human' in response.text:
+            hasCaptcha = True
+
+        if hasCaptcha:
+            self.log.error('There is a captcha')
+            helpers.wait(random.randrange(60 * 60, 120 * 60))
+
     def markDone(self):
         history = {
             'gmDate': str(self.gmDateStarted),
@@ -514,8 +615,12 @@ class Crunchbase:
         self.google = Google(self.options)
         self.google.internet = self.internet
 
+        self.filterIndex = 0
+        self.minimumRank = 0
+        self.maximumRank = 0
         self.pageIndex = 0
         self.afterId = ''
-
+        self.totalSearchResults = 0
+        
         if '--debug' in sys.argv:
-            pass #debug self.database.execute(f'delete from result')
+            self.database.execute(f'delete from result')

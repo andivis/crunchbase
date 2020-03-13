@@ -33,6 +33,5 @@
     ],
     "field_aggregators": [],
     "collection_id": "organizations",
-    "limit": 50,
-    "after_id": "c0838965-8bcd-2768-c611-6442bb402bd5"
+    "limit": 500
 }

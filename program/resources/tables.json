@@ -23,6 +23,7 @@
             "fundingTotal": "integer",
             "currency": "text",
             "fundingRounds": "text",
+            "keyword": "text",
             "gmDate": "text",
             "json": "text"
         },

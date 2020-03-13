@@ -49,7 +49,7 @@ class Main:
             'defaultSearchUrl': '',
             'secondsBetweenRequests': 0,
             'loggerName': self.log.name,
-            'searchResultLimit': 100 * 1000,
+            'searchResultLimit': 5,
             'randomizeUserAgent': 1,
             'resumeSearch': 1,
             'useGoogle': 1
