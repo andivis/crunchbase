@@ -61,7 +61,7 @@ class Crunchbase:
         if not get(newResult, 'id'):
             return
 
-        self.log.info('Writing to csv file')
+        self.log.debug('Writing to csv file')
 
         outputFile = self.options['outputFile']
 
@@ -451,12 +451,10 @@ class Crunchbase:
 
         self.searchResultsCount += 1            
 
-        if not self.passesFilters(searchResult, searchSite):
+        if not self.passesFilters(searchResult, url, searchSite):
             return result
 
         self.setLogPrefix(inputRow)
-
-        self.log.info(f'Name: {self.getProfileId(url)}.')
 
         profile = self.getProfile(url)
 
@@ -487,7 +485,7 @@ class Crunchbase:
     def getProfileId(self, url):
         return helpers.findBetween(url, '/organization/', '/')
 
-    def passesFilters(self, searchResult, searchSite):
+    def passesFilters(self, searchResult, url, searchSite):
         result = True
 
         key = 'id'
@@ -499,21 +497,25 @@ class Crunchbase:
         elif searchSite == 'crunchbase.com':
             id = helpers.getNested(searchResult, ['identifier', 'uuid'])
 
-        if self.inDatabase(key, id):
+        if self.inDatabaseAndNewEnough(key, id):
+            self.log.info(f'Skipping {self.getProfileId(url)}. Already in the database.')
             result = False
         elif f',{id},' in helpers.getFile(self.options['outputFile']):
-            self.log.debug('Skipping. Already in the output file.')
+            self.log.info(f'Skipping {self.getProfileId(url)}. Already in the output file.')
             result = False
 
         return result
 
-    def inDatabase(self, key, value):
+    def inDatabaseAndNewEnough(self, key, value):
         result = False
 
-        row = self.database.getFirst('result', 'id', f"{key} = '{value}'")
+        # is it too old?
+        minimumDate = helpers.getDateStringSecondsAgo(self.options['hoursBetweenRuns'] * 3600, True)
+
+        row = self.database.getFirst('result', '*', f"{key} = '{value}' and gmDate >= '{minimumDate}'")
 
         if row:
-            self.log.debug(f'Skipping. Already in the database.')
+            self.log.info(f'Skipping. Already in the database and was updated less than {self.options["hoursBetweenRuns"]} hours ago. Updated: {get(row, "gmDate")}.')
             result = True
         
         return result
@@ -554,6 +556,9 @@ class Crunchbase:
         result = False
 
         if not self.options['resumeSearch']:
+            return result
+
+        if '--debug' in sys.argv:
             return result
 
         minimumDate = helpers.getDateStringSecondsAgo(self.options['hoursBetweenRuns'] * 3600, True)
@@ -622,5 +627,5 @@ class Crunchbase:
         self.afterId = ''
         self.totalSearchResults = 0
         
-        if '--debug' in sys.argv:
+        if '--debug' in sys.argv and not self.options['resumeSearch']:
             self.database.execute(f'delete from result')
