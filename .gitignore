@@ -1,7 +1,6 @@
 /.vscode
 /user-data/logs
 /user-data/output
-/user-data/credentials
 
 *.sqlite
 
