@@ -38,7 +38,6 @@ class Crunchbase:
 
     def run(self, inputRows):
         self.gmDateStarted = datetime.utcnow()
-        self.newSearchResultsCount = 0
 
         self.getReady()
 
@@ -47,6 +46,7 @@ class Crunchbase:
 
         for i, inputRow in enumerate(inputRows):
             try:
+                self.searchResultsCount = 0
                 self.log.info(f'On item {i + 1} of {len(inputRows)}: {get(inputRow, "keyword")}')
 
                 self.search(inputRow)
@@ -123,11 +123,11 @@ class Crunchbase:
     def getProfile(self, url):
         self.api.proxies = self.internet.getRandomProxy()
 
-        original = self.api.urlPrefix;
-        self.api.urlPrefix = '';
+        original = self.api.urlPrefix
+        self.api.urlPrefix = ''
         ipInformation = self.api.get('https://ipinfo.io/json')
         self.log.debug(ipInformation)
-        self.api.urlPrefix = original;
+        self.api.urlPrefix = original
         
         self.api.setHeadersFromHarFile('program/resources/headers.json', '')
 
@@ -140,7 +140,7 @@ class Crunchbase:
         
         jsonElements = self.website.getXpath('', "//script[@type = 'application/ld+json' or @type = 'application/json']", False, None, document)
 
-        for i, jsonElement in enumerate(jsonElements):
+        for jsonElement in jsonElements:
             text = jsonElement.text_content()
 
             isMain = False
@@ -154,8 +154,6 @@ class Crunchbase:
 
             if isMain:
                 result = self.getMainInformation(dictionary)
-
-            #debug helpers.toFile(json.dumps(dictionary, indent=4), f'user-data/logs/j{i}.json')
         
         return result
 
@@ -253,6 +251,9 @@ class Crunchbase:
         return ''
 
     def search(self, inputRow):
+        if not get(inputRow, 'keyword'):
+            return
+
         searchSites = [
             'google.com',
             'crunchbase.com'
@@ -264,24 +265,46 @@ class Crunchbase:
                 'crunchbase.com'
             ]
 
-        afterId = ''
-
         for searchSite in searchSites:
-            success = self.searchUsingSite(inputRow, searchSite, afterId)
-
-            if success:
+            status = self.getPages(inputRow, searchSite)
+            
+            if status == 'should stop':
                 break
 
-    def searchUsingSite(self, inputRow, searchSite, afterId):
-        result = False
+    def getPages(self, inputRow, searchSite):
+        status = 'should stop'
+
+        self.pageIndex = 0
+        self.afterId = ''
+
+        while True:
+            status = self.getSearchResultsPage(inputRow, searchSite)
+
+            # only want one result for google
+            if searchSite == 'google.com':
+                status = 'should stop'
+                break
+
+            if status == 'should stop' :
+                break
+
+        return status
+
+    def getSearchResultsPage(self, inputRow, searchSite):
+        result = 'should continue'
+
+        if self.pageIndex > 0:
+            self.log.info(f'Getting page {self.pageIndex + 1}')
+
+        self.pageIndex += 1
         
-        self.api.proxies = self.internet.getRandomProxy()
+        if searchSite == 'google.com':
+            self.api.proxies = self.internet.getRandomProxy()
+        else:
+            self.api.proxies = None
         
         keyword = get(inputRow, 'keyword')
         
-        if not keyword:
-            return result
-
         searchResults = []
 
         if searchSite == 'google.com':
@@ -289,18 +312,21 @@ class Crunchbase:
             searchResults = self.google.search(f'site:crunchbase.com "{keyword}"', 5)
 
             if self.google.captcha:
-                return False
+                return 'should stop'
         elif searchSite == 'crunchbase.com':
             # use crunchbase search as a backup
-            self.api.setHeadersFromHarFile('program/resources/headers-search.json', '')
+            if os.path.exists('user-data/credentials/www.crunchbase.com.har'):
+                self.api.setHeadersFromHarFile('user-data/credentials/www.crunchbase.com.har', '/v4/data/searches/organizations?source=slug')
+            else:
+                self.api.setHeadersFromHarFile('program/resources/headers-search.json', '')
 
             if get(inputRow, 'search type') == 'location':
                 toSend = helpers.getJsonFile('program/resources/body-search.json')
                 
                 toSend['query'][0]['values'][0] = keyword
 
-                if afterId:
-                    toSend["after_id"] = afterId
+                if self.afterId:
+                    toSend["after_id"] = self.afterId
 
                 toSend = json.dumps(toSend)
 
@@ -312,21 +338,25 @@ class Crunchbase:
 
             searchResults = get(searchResults, 'entities')
 
-            self.log.info(f'Found {len(searchResults)} results')
+            self.log.debug(f'Found {len(searchResults)} results on this page')
 
             if get(inputRow, 'search type') == 'company':
                 if searchResults and len(searchResults) > 0:
                     searchResults = searchResults[0:1]
+            else:
+                if len(searchResults):
+                    lastResult = searchResults[-1]
+                    self.afterId = get(lastResult, 'uuid')
+                else:
+                    self.log.info('Reached end of search results')
+                    self.afterId = ''
+                    result = 'should stop'
 
         for searchResult in searchResults:
             if get(inputRow, 'search type') == 'location':
                 searchResult = get(searchResult, 'properties')
-
-            if not self.passesFilters(searchResult, searchSite):
-                if get(inputRow, 'search type') == 'location':
-                    continue
-                else:
-                    break
+                # it has at least one result
+                result = 'success'
 
             url = ''
             
@@ -339,26 +369,32 @@ class Crunchbase:
                 url = helpers.getNested(searchResult, ['identifier', 'permalink'])
                 url = '/organization/' + url
 
-            profile = self.getProfile(url)
-
-            if not profile:
-                if get(inputRow, 'search type') == 'location':
-                    continue
-                else:
-                    break
-
-            self.output(inputRow, profile)
-
-            self.newSearchResultsCount += 1            
-            self.log.info(f'New results: {self.newSearchResultsCount}. Result: {get(profile, "name")}.')
-
-            result = True
+            result = self.handleSearchResult(inputRow, url, searchResult, searchSite)
 
             if not get(inputRow, 'search type') == 'location':
                 # only want first result
                 break
         
         return result
+
+    def handleSearchResult(self, inputRow, url, searchResult, searchSite):
+        result = 'should continue'
+
+        if not self.passesFilters(searchResult, searchSite):
+            return result
+
+        # debug
+        self.searchResultsCount += 1            
+        self.log.info(f'Results: {self.searchResultsCount}. Result: {self.getProfileId(url)}.')
+        result = 'success'
+        return result
+
+        profile = self.getProfile(url)
+
+        self.output(inputRow, profile)
+
+        self.searchResultsCount += 1            
+        self.log.info(f'New results: {self.searchResultsCount}. Result: {get(profile, "name")}.')
 
     def getProfileUrl(self, url):
         return 'https://www.crunchbase.com/organization/' + self.getProfileId(url)
@@ -471,10 +507,15 @@ class Crunchbase:
 
         self.api = Api('https://www.crunchbase.com', self.options)
         self.api.timeout = 15
+        self.api.cachePostRequests = True
+        
         self.internet = Internet(self.options)
         self.website = Website(self.options)
         self.google = Google(self.options)
         self.google.internet = self.internet
+
+        self.pageIndex = 0
+        self.afterId = ''
 
         if '--debug' in sys.argv:
             pass #debug self.database.execute(f'delete from result')

@@ -27,11 +27,12 @@
             "operator_id": "between",
             "values": [
                 5000,
-                5500
+                6000
             ]
         }
     ],
     "field_aggregators": [],
     "collection_id": "organizations",
-    "limit": 15
+    "limit": 50,
+    "after_id": "c0838965-8bcd-2768-c611-6442bb402bd5"
 }
