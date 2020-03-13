@@ -37,20 +37,28 @@ class Crunchbase:
 
         while True:
             self.run(inputRows)
-            self.waitForNextRun()
+            
+            shouldRepeat = self.waitForNextRun()
+
+            if not shouldRepeat:
+                break
 
     def run(self, inputRows):
         self.gmDateStarted = datetime.utcnow()
 
         self.getReady()
 
+        if self.options['refreshOnly']:
+            # doesn't matter when last run was
+            self.refreshOnly()
+
+            self.log.info(f'Adding companies founded since {self.options["dateForNewCompaniesSearch"]}')
+
         if self.isDone():
             return
 
         for self.inputRowIndex, self.inputRow in enumerate(inputRows):
             try:
-                self.log.info(f'On item {self.inputRowIndex + 1} of {len(inputRows)}: {get(self.inputRow, "keyword")}')
-
                 self.search(self.inputRow)
             except Exception as e:
                 helpers.handleException(e)
@@ -60,6 +68,8 @@ class Crunchbase:
     def output(self, inputRow, newResult):
         if not get(newResult, 'id'):
             return
+
+        id = get(newResult, 'id')
 
         self.log.debug('Writing to csv file')
 
@@ -94,8 +104,20 @@ class Crunchbase:
 
             values.append(value)
 
-        # this quotes fields that contain commas
-        helpers.appendCsvFile(values, outputFile)
+        inFile = False
+        
+        if f',{id},' in helpers.getFile(self.options['outputFile']):
+            inFile = True
+        
+        # remove it so can update it
+        if inFile and self.options['refreshOnly']:
+            self.removeFromCsvFile(id, outputFile)
+
+        if not inFile or self.options['refreshOnly']:
+            # this quotes fields that contain commas
+            helpers.appendCsvFile(values, outputFile)
+        else:
+            self.log.debug(f'Not writing {get(newResult, "permalink")} to output file. Already in the output file.')
 
         self.storeToDatabase(inputRow, newResult)
 
@@ -117,16 +139,12 @@ class Crunchbase:
                 
                 printableFields.append(printableName)
             
-            helpers.toFile(','.join(printableFields), outputFile)
+            helpers.toFile(','.join(printableFields) + '\n', outputFile)
 
     def getProfile(self, url):
         self.api.proxies = self.internet.getRandomProxy()
 
-        original = self.api.urlPrefix
-        self.api.urlPrefix = ''
-        ipInformation = self.api.get('https://ipinfo.io/json')
-        self.log.debug(ipInformation)
-        self.api.urlPrefix = original
+        self.checkProxy()
         
         self.api.setHeadersFromHarFile('program/resources/headers.json', '')
 
@@ -274,14 +292,22 @@ class Crunchbase:
                 'crunchbase.com'
             ]
 
-        self.totalSearchResults = 0;
+        self.totalSearchResults = 0
 
         self.filterIndex = 0
-        self.maximumFilterValue = 1000 * 1000
+        self.maximumFilterValue = 100 * 1000
         self.filterStep = 10 * 1000
 
         if '--debug' in sys.argv:
+            self.filterStep = 100
             self.maximumFilterValue = self.filterStep * 3
+
+        if self.options['refreshOnly']:
+            # only want to search locations
+            if not get(inputRow, 'search type') == 'location':
+                return
+            # only want one step
+            self.filterStep = self.maximumFilterValue
 
         self.totalSteps = self.maximumFilterValue // self.filterStep
 
@@ -292,6 +318,8 @@ class Crunchbase:
         self.maximumRank = 0
 
         status = ''
+
+        self.log.info(f'On keyword {self.inputRowIndex + 1} of {len(self.inputRows)}: {get(self.inputRow, "keyword")}')
 
         for self.filterIndex in range(0, self.totalSteps):
             self.log.info(f'Searching for {get(inputRow, "keyword")}. Search type: {get(inputRow, "search type")}.')
@@ -310,13 +338,16 @@ class Crunchbase:
                 break
 
     def getPages(self, inputRow, searchSite):
-        status = 'should stop'
+        status = 'should continue'
 
         self.pageIndex = 0
         self.afterId = ''
 
         while True:
-            status = self.getSearchResultsPage(inputRow, searchSite)
+            try:
+                status = self.getSearchResultsPage(inputRow, searchSite)
+            except Exception as e:
+                helpers.handleException(e)
 
             self.pageIndex += 1
 
@@ -325,7 +356,12 @@ class Crunchbase:
                 status = 'should stop'
                 break
 
-            if status == 'should stop' :
+            if status == 'should stop':
+                break
+            
+            # backup
+            if self.pageIndex > 500:
+                self.log.debug('Stopping. Too many pages.')
                 break
 
         return status
@@ -365,14 +401,20 @@ class Crunchbase:
             if get(inputRow, 'search type') == 'location':
                 toSend = helpers.getJsonFile('program/resources/body-search.json')
                 
-                toSend['query'][0]['values'][0] = keyword
+                if self.options['refreshOnly']:
+                    datePredicate = helpers.getJsonFile('program/resources/recently-founded.json')
+                    toSend['query'][1] = datePredicate
+                    toSend['query'][1]['values'][0] = self.options['dateForNewCompaniesSearch']
 
-                self.minimumRank = 0 + (self.filterIndex * self.filterStep)
-                
-                self.maximumRank = 0 + ((self.filterIndex + 1) * self.filterStep)
-                self.maximumRank = self.maximumRank - 1
+                else:
+                    toSend['query'][0]['values'][0] = keyword
 
-                toSend['query'][1]['values'] = [self.minimumRank, self.maximumRank]
+                    self.minimumRank = 0 + (self.filterIndex * self.filterStep)
+                    
+                    self.maximumRank = 0 + ((self.filterIndex + 1) * self.filterStep)
+                    self.maximumRank = self.maximumRank - 1
+
+                    toSend['query'][1]['values'] = [self.minimumRank, self.maximumRank]
 
                 if self.afterId:
                     toSend["after_id"] = self.afterId
@@ -412,32 +454,36 @@ class Crunchbase:
                     result = 'should stop'
 
         for searchResult in searchResults:
-            if get(inputRow, 'search type') == 'location':
-                searchResult = get(searchResult, 'properties')
-                # it has at least one result
-                result = 'success'
+            try:
+                if get(inputRow, 'search type') == 'location':
+                    searchResult = get(searchResult, 'properties')
+                    # it has at least one result
+                    result = 'success'
 
-            url = ''
-            
-            if searchSite == 'google.com':
-                if not '/organization/' in searchResult:
-                    continue 
+                url = ''
+                
+                if searchSite == 'google.com':
+                    if not '/organization/' in searchResult:
+                        continue 
 
-                url = '/organization/' + self.getProfileId(searchResult)
-            elif searchSite == 'crunchbase.com':
-                url = helpers.getNested(searchResult, ['identifier', 'permalink'])
-                url = '/organization/' + url
+                    url = '/organization/' + self.getProfileId(searchResult)
+                elif searchSite == 'crunchbase.com':
+                    url = helpers.getNested(searchResult, ['identifier', 'permalink'])
+                    url = '/organization/' + url
 
-            result = self.handleSearchResult(inputRow, url, searchResult, searchSite)
+                result = self.handleSearchResult(inputRow, url, searchResult, searchSite)
 
-            if not get(inputRow, 'search type') == 'location':
-                # only want first result
-                break
+                if not get(inputRow, 'search type') == 'location':
+                    # only want first result
+                    break
 
-            if self.reachedSearchLimit():
-                self.afterId = ''
-                result = 'should stop'
-                break
+                if self.reachedSearchLimit():
+                    self.afterId = ''
+                    result = 'should stop'
+                    self.log.info(f'Stopping. Reached limit of {self.options["searchResultLimit"]} results')
+                    break
+            except Exception as e:
+                helpers.handleException(e)
 
         if get(inputRow, 'search type') == 'location' and self.searchResultsCount == self.totalSearchResults:
             self.log.info('Reached end of search results')
@@ -465,17 +511,49 @@ class Crunchbase:
     def reachedSearchLimit(self):
         result = False
         
-        if self.options['searchResultLimit'] and self.searchResultsCount >= self.options['searchResultLimit']:
-            self.log.info(f'Stopping. Reached limit of {self.options["searchResultLimit"]} results')
+        if self.options['searchResultLimit'] > 0 and self.searchResultsCount >= self.options['searchResultLimit']:
             result = True
 
         return result
 
-    def setLogPrefix(self, inputRow):
-        line = f'Keyword {self.inputRowIndex + 1} of {len(self.inputRows)}: {get(self.inputRow, "keyword")}'
+    def refreshOnly(self):
+        # find rows not update in a long time
+        minimumDate = helpers.getDateStringSecondsAgo(self.options['hoursBetweenRuns'] * 3600, True)
+
+        printableDate = helpers.findBetween(minimumDate, '', '.')
         
-        if get(inputRow, 'search type') == 'location':
-            line += f'. Filter {self.filterIndex + 1} of {self.totalSteps}. Rank: {self.minimumRank} to {self.maximumRank}. Page: {self.pageIndex + 1}. Results: {self.searchResultsCount}.'
+        self.log.info(f'Refreshing all results not checked since {printableDate}')
+
+        rows = self.database.get('result', '*', f"gmDate < '{minimumDate}'")
+
+        random.shuffle(rows)
+
+        for i, row in enumerate(rows):
+            try:
+                self.log.info(f'Refreshing result {i + 1} of {len(rows)}: {get(row, "permalink")}')
+                
+                self.setLogPrefix(None, f'Refreshing {i + 1} of {len(rows)}: {get(row, "permalink")}')
+
+                url = '/organization/' + get(row, 'permalink')
+
+                self.inputRow = {
+                    'keyword': get(row, 'keyword')
+                }
+
+                profile = self.getProfile(url)
+
+                self.output(None, profile)
+            except Exception as e:
+                helpers.handleException(e)
+
+        self.log.info(f'Done refreshing')
+
+    def setLogPrefix(self, inputRow, line=''):
+        if not line:
+            line = f'Keyword {self.inputRowIndex + 1} of {len(self.inputRows)}: {get(self.inputRow, "keyword")}'
+        
+            if get(inputRow, 'search type') == 'location':
+                line = f'{get(self.inputRow, "keyword")}. Filter {self.filterIndex + 1} of {self.totalSteps}: rank {self.minimumRank} - {self.maximumRank}. Page: {self.pageIndex + 1}. Results: {self.searchResultsCount}.'
         
         helpers.setLogPrefix(self.log, line)
 
@@ -497,16 +575,14 @@ class Crunchbase:
         elif searchSite == 'crunchbase.com':
             id = helpers.getNested(searchResult, ['identifier', 'uuid'])
 
-        if self.inDatabaseAndNewEnough(key, id):
-            self.log.info(f'Skipping {self.getProfileId(url)}. Already in the database.')
-            result = False
-        elif f',{id},' in helpers.getFile(self.options['outputFile']):
-            self.log.info(f'Skipping {self.getProfileId(url)}. Already in the output file.')
+        name = self.getProfileId(url)
+
+        if self.inDatabaseAndNewEnough(key, id, name):
             result = False
 
         return result
 
-    def inDatabaseAndNewEnough(self, key, value):
+    def inDatabaseAndNewEnough(self, key, value, name):
         result = False
 
         # is it too old?
@@ -515,14 +591,17 @@ class Crunchbase:
         row = self.database.getFirst('result', '*', f"{key} = '{value}' and gmDate >= '{minimumDate}'")
 
         if row:
-            self.log.info(f'Skipping. Already in the database and was updated less than {self.options["hoursBetweenRuns"]} hours ago. Updated: {get(row, "gmDate")}.')
+            date = helpers.findBetween(get(row, 'gmDate'), '', '.')
+            self.log.info(f'Skipping {name}. Already in the database and was updated less than {self.options["hoursBetweenRuns"]} hours ago. Updated: {date}.')
             result = True
         
         return result
 
     def storeToDatabase(self, inputRow, newResult):
         if get(newResult, 'json'):
-            newResult['json']['inputRow'] = inputRow
+            if inputRow:
+                newResult['json']['inputRow'] = inputRow
+            
             newResult['json'] = json.dumps(newResult['json'], indent=4)
 
         self.database.insert('result', newResult)
@@ -531,19 +610,24 @@ class Crunchbase:
         helpers.makeDirectory(os.path.dirname(self.options['outputFile']))
 
         # should restart or resume search from where left off?
-        if not self.options['resumeSearch'] and os.path.exists(self.options['outputFile']):
-            # move old output file
-            rotatedFileName = self.options['outputFile'] + '.old'
-            helpers.removeFile(rotatedFileName)
-            os.rename(self.options['outputFile'], rotatedFileName)
+        if os.path.exists(self.options['outputFile']):
+            if not self.options['resumeSearch']:
+                # move old output file
+                rotatedFileName = self.options['outputFile'] + '.old'
+                helpers.removeFile(rotatedFileName)
+                os.rename(self.options['outputFile'], rotatedFileName)
 
-    def waitBetweenRequests(self):
-        if get(self.options, 'secondsBetweenRequests'):
-            time.sleep(self.options['secondsBetweenRequests'])
+    def waitBetweenRequests(self, type=None):
+        if type == 'profile':
+            if get(self.options, 'secondsBetweenProfiles'):
+                time.sleep(self.options['secondsBetweenProfiles'])
+        else:
+            if get(self.options, 'secondsBetweenSearches'):
+                time.sleep(self.options['secondsBetweenSearches'])
 
     def getDocument(self, url):
         response = self.api.get(url, None, False, True)
-        self.waitBetweenRequests()
+        self.waitBetweenRequests('profile')
 
         if response and 'verify you are a human' in response.text:
             self.log.error('There is a captcha')
@@ -571,6 +655,19 @@ class Crunchbase:
 
         return result
 
+    def removeFromCsvFile(self, id, outputFile):
+        lines = helpers.getFile(outputFile).splitlines()
+        
+        newFile = ''
+
+        for line in lines:
+            if f',{id},' in line:
+                continue
+
+            newFile += line + '\n'
+
+        helpers.toFile(newFile, outputFile)
+
     def handleCaptcha(self, response):
         if response == '' or response == None:
             return
@@ -586,6 +683,19 @@ class Crunchbase:
             self.log.error('There is a captcha')
             helpers.wait(random.randrange(60 * 60, 120 * 60))
 
+    def checkProxy(self):
+        if random.randrange(0, 100) == 0:
+            original = self.api.urlPrefix
+            self.api.urlPrefix = ''
+
+            try:
+                ipInformation = self.api.get('https://ipinfo.io/json')
+            except Exception as e:
+                helpers.handleException(e)
+
+            self.log.debug(ipInformation)
+            self.api.urlPrefix = original
+
     def markDone(self):
         history = {
             'gmDate': str(self.gmDateStarted),
@@ -595,15 +705,18 @@ class Crunchbase:
         self.database.insert('history', history)
 
     def waitForNextRun(self):
+        self.log.info('Done this run')
+
+        if self.options['runRepeatedly'] == 0:
+            self.log.info('Run repeatedly is 0. Not running again.')
+            return False
+
         # added a few seconds for a margin of error
         nextDay = self.gmDateStarted + timedelta(hours=self.options['hoursBetweenRuns'], seconds=10)
 
-        self.log.info('Done this run')
-        
         helpers.waitUntil(nextDay)
 
-        if '--debug' in sys.argv:
-            time.sleep(3)
+        return True
 
     def __init__(self, options, credentials):
         self.options = options
@@ -626,6 +739,3 @@ class Crunchbase:
         self.pageIndex = 0
         self.afterId = ''
         self.totalSearchResults = 0
-        
-        if '--debug' in sys.argv and not self.options['resumeSearch']:
-            self.database.execute(f'delete from result')

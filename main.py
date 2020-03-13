@@ -34,6 +34,8 @@ class Main:
 
     def cleanUp(self):
         self.log.info('Done')
+        self.log.info('Exiting')
+        helpers.wait(30)
 
     def __init__(self):
         self.loggerHandlers = helpers.setUpLogging('user-data/logs')
@@ -46,17 +48,23 @@ class Main:
             'proxyListUrl': helpers.getFile('program/resources/resource'),
             'proxyProvider': 'smartproxy',
             'hoursBetweenRuns': 7 * 24,
+            'runRepeatedly': 1,
             'defaultSearchUrl': '',
-            'secondsBetweenRequests': 0,
+            'secondsBetweenSearches': 0,
+            'secondsBetweenProfiles': 0,
             'loggerName': self.log.name,
             'searchResultLimit': -1,
             'randomizeUserAgent': 1,
             'resumeSearch': 1,
+            'refreshOnly': 0,
+            'dateForNewCompaniesSearch': '01/01/2020',
             'useGoogle': 1
         }
 
         optionsFileName = helpers.getParameter('--optionsFile', False, 'user-data/options.ini')
         
+        helpers.setOptionFromParameter('--refresh', 'refreshOnly', self.options)
+
         # read the options file
         helpers.setOptions(optionsFileName, self.options)
 

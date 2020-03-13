@@ -1,0 +1,8 @@
+{
+    "type": "predicate",
+    "field_id": "founded_on",
+    "operator_id": "gte",
+    "values": [
+        "01/01/2020"
+    ]
+}
