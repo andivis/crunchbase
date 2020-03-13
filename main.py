@@ -63,9 +63,10 @@ class Main:
         }
 
         optionsFileName = helpers.getParameter('--optionsFile', False, 'user-data/options.ini')
-        
-        helpers.setOptionFromParameter('--refresh', 'refreshOnly', self.options)
 
+        if '--refresh' in sys.argv:        
+            self.options['refreshOnly'] = 1
+            
         # read the options file
         helpers.setOptions(optionsFileName, self.options)
 

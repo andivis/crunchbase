@@ -1,5 +1,9 @@
 # crunchbase
 
+## Video
+
+https://www.loom.com/share/c48cd8ae1ac24dbab7c5a19b6e4a2b7c
+
 ## Installation
 
 1. Make sure Python 3.8 or higher and git are installed.
@@ -47,7 +51,7 @@
 
 ## Instructions
 
-1. Save your .har as `user-data/credentials/www.crunchbase.com.har` as shown in the video.
+1. Save your .har as `user-data/credentials/www.crunchbase.com.har` as shown in the video. Perform the search from this url: https://www.crunchbase.com/search/organizations/field/organizations/location_identifiers/united-kingdom
 2. Optionally, put your proxy list into `user-data/proxies.csv`. The header must contain `url,port,username,password`. The other lines follow that format. See `user-data/proxies.sample.csv` for an example.
 3. Run `python3 main.py`. Depending on your system you may need run `python main.py` instead.
 4. The output will be in `user-data/output/output.csv` and `user-data/database.sqlite`.
