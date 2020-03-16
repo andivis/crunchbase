@@ -33,5 +33,5 @@
     ],
     "field_aggregators": [],
     "collection_id": "organizations",
-    "limit": 500
+    "limit": 50
 }

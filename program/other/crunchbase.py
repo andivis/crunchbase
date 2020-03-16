@@ -77,6 +77,7 @@ class Crunchbase:
 
         ignoreColumns = [
             'permalink',
+            'id',
             'json'
         ]
 
@@ -124,7 +125,9 @@ class Crunchbase:
     def writeHeaders(self, fields, outputFile):
         if not os.path.exists(outputFile):
             printableNames = {
-                'gmDate': 'date found'
+                'gmDate': 'date found',
+                'companyRank': 'CB Rank (Company)',
+                'organizationRank': 'CB Rank (Organization)'
             }
 
             printableFields = []
@@ -228,44 +231,152 @@ class Crunchbase:
                 money = helpers.compactNumber(money)
 
             currency = helpers.getNested(fundingRound, ['money_raised', 'currency'])
+            
+            numberOfInvestors = get(fundingRound, 'num_investors')
+            
+            fundingRoundInvestors = self.joinByValue(get(fundingRound, 'lead_investor_identifiers'), 'value', ' | ')
 
-            string = f'{date} {name}: {money} {currency}'
+            string = f'{date} {name}. {money} {currency}. Investors: {numberOfInvestors}. Investor names: {fundingRoundInvestors}.'
 
             fundingRoundsStrings.append(string)
 
         fundingRounds = '; '.join(fundingRoundsStrings)
 
+        companyId = helpers.getNested(dictionary, ['properties', 'identifier', 'uuid'])
+        
+        dictionary['articles'] = self.getArticles(companyId)
+
         result = {
             'gmDate': str(datetime.utcnow()),
-            'id': helpers.getNested(dictionary, ['properties', 'identifier', 'uuid']),
-            'permalink': helpers.getNested(dictionary, ['properties', 'identifier', 'permalink']),
             'name': helpers.getNested(dictionary, ['properties', 'title']),
-            'legalName': helpers.getNested(dictionary, ['cards', 'overview_fields', 'legal_name']),
-            'city': self.findByValue(locations, 'location_type', 'city', 'value'),
-            'region': self.findByValue(locations, 'location_type', 'region', 'value'),
-            'country': self.findByValue(locations, 'location_type', 'country', 'value'),
             'description': helpers.getNested(dictionary, ['properties', 'short_description']),
+            'industries': self.getStringFromArray(dictionary, ['overview_fields', 'categories'], 'industry', '; '),
+            'fundingTotal': helpers.getNested(dictionary, ['cards', 'funding_rounds_headline', 'funding_total', 'value']),
+            'currency': helpers.getNested(dictionary, ['cards', 'funding_rounds_headline', 'funding_total', 'currency']),
+            'companyRank': helpers.getNested(dictionary, ['cards', 'overview_headline', 'rank_org']),
+            'organizationRank': helpers.getNested(dictionary, ['cards', 'overview_headline', 'rank_org_company']),
+            'founded': helpers.getNested(dictionary, ['cards', 'overview_fields', 'founded_on', 'value']),
+            'founders': self.getStringFromArray(dictionary, ['cards', 'overview_fields', 'founder_identifiers'], 'founder', '; '),
+            'operatingStatus': helpers.getNested(dictionary, ['cards', 'overview_fields', 'operating_status']),
+            'fundingStatus': helpers.getNested(dictionary, ['cards', 'overview_fields', 'funding_stage']),
+            'lastFundingType': helpers.getNested(dictionary, ['cards', 'overview_fields', 'last_funding_type']),
+            'numberOfEmployees': numberOfEmployees,
+            'alsoKnownAs': self.getStringFromArray(dictionary, ['cards', 'overview_fields', 'aliases'], '', '; '),
             'website': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'website', 'value']),
             'email': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'contact_email']),
             'linkedin': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'linkedin', 'value']),
             'phone': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'phone_number']),
-            'founded': helpers.getNested(dictionary, ['cards', 'overview_fields', 'founded_on', 'value']),
-            'operatingStatus': helpers.getNested(dictionary, ['cards', 'overview_fields', 'operating_status']),
-            'fundingStatus': helpers.getNested(dictionary, ['cards', 'overview_fields', 'funding_stage']),
-            'fundingType': helpers.getNested(dictionary, ['cards', 'overview_fields', 'last_funding_type']),
-            'crunchbaseUrl': 'https://www.crunchbase.com/organization/' + helpers.getNested(dictionary, ['properties', 'identifier', 'permalink']),
+            'boardMembers': self.getStringFromArray(dictionary, ['cards', 'current_advisors_image_list'], 'boardMember'),
             'employees': employees,
-            'numberOfEmployees': numberOfEmployees,
-            'fundingTotal': helpers.getNested(dictionary, ['cards', 'funding_rounds_headline', 'funding_total', 'value']),
-            'currency': helpers.getNested(dictionary, ['cards', 'funding_rounds_headline', 'funding_total', 'currency']),
             'fundingRounds': fundingRounds,
+            'numberOfInvestors': helpers.getNested(dictionary, ['cards', 'investors_headline', 'num_investors']),
+            'numberOfLeadInvestors': helpers.getNested(dictionary, ['cards', 'investors_headline', 'num_lead_investors']),
+            'investors': self.getInvestorsString(dictionary),
+            'articles': self.getStringFromArray(dictionary, ['articles'], 'article'),
+            'city': self.findByValue(locations, 'location_type', 'city', 'value'),
+            'region': self.findByValue(locations, 'location_type', 'region', 'value'),
+            'country': self.findByValue(locations, 'location_type', 'country', 'value'),
+            'crunchbaseUrl': 'https://www.crunchbase.com/organization/' + helpers.getNested(dictionary, ['properties', 'identifier', 'permalink']),
             'keyword': get(self.inputRow, 'keyword'),
+            'permalink': helpers.getNested(dictionary, ['properties', 'identifier', 'permalink']),
+            'id': companyId,
             'json': dictionary
         }
 
         self.log.info(f'Profile: {get(result, "name")}, {get(result, "legalName")}, {get(result, "city")}, {get(result, "description")[0:30]}...')
 
         return result
+
+    def getArticles(self, companyId):
+        results = []
+
+        self.api.setHeadersFromHarFile('program/resources/headers-search.json', '')
+        
+        toSend = helpers.getJsonFile('program/resources/body-activities.json')
+        
+        toSend['query'][0]['values'][0] = companyId
+
+        toSend = json.dumps(toSend)
+        
+        response = self.api.post(f'/v4/data/searches/activities', data=toSend, responseIsJson=False, returnResponseObject=True)
+
+        self.handleCaptcha(response)
+
+        if response and response.text:
+            dictionary = json.loads(response.text)
+            results = get(dictionary, 'entities')
+
+        return results
+
+    def getStringFromArray(self, dictionary, nestedPath, type, joinString='\n'):
+        strings = []
+
+        array = helpers.getNested(dictionary, nestedPath)
+
+        for item in array:
+            string = self.getStringFromArrayItem(item, type)
+
+            strings.append(string)
+
+        result = joinString.join(strings)
+
+        return result
+
+    def getStringFromArrayItem(self, item, type):
+        result = ''
+
+        # plain string
+        if not type:
+            result = item
+        if type == 'industry':
+            result = get(item, 'value')
+        elif type == 'founder':
+            result = get(item, 'value')
+        elif type == 'boardMember':
+            result = helpers.getNested(item, ['person_identifier', 'value'])
+        elif type == 'article':
+            date = helpers.getNested(item, ['properties', 'activity_date'])
+            publisher = helpers.getNested(item, ['properties', 'activity_properties', 'publisher'])
+            title = helpers.getNested(item, ['properties', 'identifier', 'value'])
+            url = helpers.getNested(item, ['properties', 'activity_properties', 'url', 'value'])
+
+            result = f'{date} {publisher}: {title} {url} '
+
+        return result
+
+    def getInvestorsString(self, dictionary):
+        strings = []
+
+        array = helpers.getNested(dictionary, ['cards', 'investors_list'])
+
+        for item in array:
+            name = helpers.getNested(item, ['investor_identifier', 'value'])
+
+            fundingRound = helpers.getNested(item, ['funding_round_identifier', 'value'])
+
+            leadPart = ''
+            
+            if get(item, 'is_lead_investor'):
+                leadPart = ' (lead investor)'
+
+            string = f'{name}({fundingRound}){leadPart}'
+
+            strings.append(string)
+
+        result =  '; '.join(strings)
+
+        return result
+
+    def joinByValue(self, array, keyToFind, joinString):
+        strings = []
+        
+        for item in array:
+            value = get(item, keyToFind)
+            
+            if value:
+                strings.append(value)
+
+        return joinString.join(strings)
 
     def findByValue(self, array, keyToFind, valueMustMatch, keyToReturn):
         for dictionary in array:
@@ -299,6 +410,9 @@ class Crunchbase:
         self.filterStep = 10 * 1000
 
         if '--debug' in sys.argv or self.options['customFilterStep']:
+            if not self.options['customFilterStep']:
+                self.options['customFilterStep'] = 100
+
             self.filterStep = self.options['customFilterStep']
             self.maximumFilterValue = self.filterStep * 3
 

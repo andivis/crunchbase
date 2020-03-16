@@ -1,0 +1,21 @@
+{
+    "field_ids": [
+        "activity_properties",
+        "entity_def_id",
+        "identifier",
+        "activity_date",
+        "activity_entities"
+    ],
+    "order": [],
+    "query": [
+        {
+            "type": "predicate",
+            "field_id": "activity_entities",
+            "operator_id": "includes",
+            "values": [
+                ""
+            ]
+        }
+    ],
+    "limit": 100
+}
