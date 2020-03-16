@@ -127,7 +127,8 @@ class Crunchbase:
             printableNames = {
                 'gmDate': 'date found',
                 'companyRank': 'CB Rank (Company)',
-                'organizationRank': 'CB Rank (Organization)'
+                'organizationRank': 'CB Rank (Organization)',
+                'investorRank': 'CB Rank (Investor)'
             }
 
             printableFields = []
@@ -210,7 +211,7 @@ class Crunchbase:
 
             employeeStrings.append(string)
 
-        employees = '; '.join(employeeStrings)
+        employees = '\n'.join(employeeStrings)
 
         numberOfEmployees = helpers.getNested(dictionary, ['cards', 'overview_fields', 'num_employees_enum'])
         numberOfEmployees = helpers.findBetween(numberOfEmployees, 'c_', '')
@@ -228,7 +229,7 @@ class Crunchbase:
             money = helpers.getNested(fundingRound, ['money_raised', 'value'])
 
             if money:
-                money = helpers.compactNumber(money)
+                money = helpers.compactNumber(money, 0, 50 * 1000 * 1000, 1)
 
             currency = helpers.getNested(fundingRound, ['money_raised', 'currency'])
             
@@ -240,21 +241,23 @@ class Crunchbase:
 
             fundingRoundsStrings.append(string)
 
-        fundingRounds = '; '.join(fundingRoundsStrings)
+        fundingRounds = '\n'.join(fundingRoundsStrings)
 
         companyId = helpers.getNested(dictionary, ['properties', 'identifier', 'uuid'])
         
-        dictionary['articles'] = self.getArticles(companyId)
+        dictionary['newsAndActivity'] = self.getNewsAndActivity(companyId)
 
         result = {
+            'id': companyId,
             'gmDate': str(datetime.utcnow()),
             'name': helpers.getNested(dictionary, ['properties', 'title']),
             'description': helpers.getNested(dictionary, ['properties', 'short_description']),
-            'industries': self.getStringFromArray(dictionary, ['overview_fields', 'categories'], 'industry', '; '),
+            'industries': self.getStringFromArray(dictionary, ['cards', 'overview_fields', 'categories'], 'industry', '; '),
             'fundingTotal': helpers.getNested(dictionary, ['cards', 'funding_rounds_headline', 'funding_total', 'value']),
             'currency': helpers.getNested(dictionary, ['cards', 'funding_rounds_headline', 'funding_total', 'currency']),
             'companyRank': helpers.getNested(dictionary, ['cards', 'overview_headline', 'rank_org']),
             'organizationRank': helpers.getNested(dictionary, ['cards', 'overview_headline', 'rank_org_company']),
+            'investorRank': helpers.getNested(dictionary, ['cards', 'overview_investor_headline', 'rank_principal_investor']),
             'founded': helpers.getNested(dictionary, ['cards', 'overview_fields', 'founded_on', 'value']),
             'founders': self.getStringFromArray(dictionary, ['cards', 'overview_fields', 'founder_identifiers'], 'founder', '; '),
             'operatingStatus': helpers.getNested(dictionary, ['cards', 'overview_fields', 'operating_status']),
@@ -262,24 +265,32 @@ class Crunchbase:
             'lastFundingType': helpers.getNested(dictionary, ['cards', 'overview_fields', 'last_funding_type']),
             'numberOfEmployees': numberOfEmployees,
             'alsoKnownAs': self.getStringFromArray(dictionary, ['cards', 'overview_fields', 'aliases'], '', '; '),
+            'legalName': helpers.getNested(dictionary, ['cards', 'overview_fields', 'legal_name']),
+            'hubTags': self.getStringFromArray(dictionary, ['cards', 'overview_fields', 'hub_tags'], '', '; '),
+            'ipoStatus': helpers.getNested(dictionary, ['cards', 'overview_company_fields', 'ipo_status']),
+            'companyType': helpers.getNested(dictionary, ['cards', 'overview_company_fields', 'company_type']),
             'website': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'website', 'value']),
-            'email': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'contact_email']),
+            'facebook': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'facebook', 'value']),
             'linkedin': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'linkedin', 'value']),
+            'twitter': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'twitter', 'value']),
+            'email': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'contact_email']),
             'phone': helpers.getNested(dictionary, ['cards', 'overview_fields2', 'phone_number']),
-            'boardMembers': self.getStringFromArray(dictionary, ['cards', 'current_advisors_image_list'], 'boardMember'),
-            'employees': employees,
+            'longDescription': helpers.getNested(dictionary, ['cards', 'overview_description', 'description']),
+            'boardMembers': self.getStringFromArray(dictionary, ['cards', 'current_advisors_image_list'], 'boardMember', '; '),
+            'numberOfFundingRounds': helpers.getNested(dictionary, ['cards', 'funding_rounds_headline', 'num_funding_rounds']),
             'fundingRounds': fundingRounds,
+            'employees': employees,
             'numberOfInvestors': helpers.getNested(dictionary, ['cards', 'investors_headline', 'num_investors']),
             'numberOfLeadInvestors': helpers.getNested(dictionary, ['cards', 'investors_headline', 'num_lead_investors']),
             'investors': self.getInvestorsString(dictionary),
-            'articles': self.getStringFromArray(dictionary, ['articles'], 'article'),
+            'newsAndActivity': self.getStringFromArray(dictionary, ['newsAndActivity'], 'newsAndActivity'),
+            'investments': self.getStringFromArray(dictionary, ['cards', 'investments_list'], 'investment'),
             'city': self.findByValue(locations, 'location_type', 'city', 'value'),
             'region': self.findByValue(locations, 'location_type', 'region', 'value'),
             'country': self.findByValue(locations, 'location_type', 'country', 'value'),
             'crunchbaseUrl': 'https://www.crunchbase.com/organization/' + helpers.getNested(dictionary, ['properties', 'identifier', 'permalink']),
             'keyword': get(self.inputRow, 'keyword'),
             'permalink': helpers.getNested(dictionary, ['properties', 'identifier', 'permalink']),
-            'id': companyId,
             'json': dictionary
         }
 
@@ -287,7 +298,7 @@ class Crunchbase:
 
         return result
 
-    def getArticles(self, companyId):
+    def getNewsAndActivity(self, companyId):
         results = []
 
         self.api.setHeadersFromHarFile('program/resources/headers-search.json', '')
@@ -334,13 +345,21 @@ class Crunchbase:
             result = get(item, 'value')
         elif type == 'boardMember':
             result = helpers.getNested(item, ['person_identifier', 'value'])
-        elif type == 'article':
+        elif type == 'newsAndActivity':
             date = helpers.getNested(item, ['properties', 'activity_date'])
             publisher = helpers.getNested(item, ['properties', 'activity_properties', 'publisher'])
             title = helpers.getNested(item, ['properties', 'identifier', 'value'])
             url = helpers.getNested(item, ['properties', 'activity_properties', 'url', 'value'])
 
             result = f'{date} {publisher}: {title} {url} '
+        elif type == 'investment':
+            date = get(item, 'announced_on')
+            company = helpers.getNested(item, ['organization_identifier', 'value'])
+            fundingRoundName = helpers.getNested(item, ['funding_round_identifier', 'value'])
+            money = helpers.getNested(item, ['funding_round_money_raised', 'value'])
+            currency = helpers.getNested(item, ['funding_round_money_raised', 'currency'])
+
+            result = f'{date} {company}. {fundingRoundName}. {money} {currency}.'
 
         return result
 
@@ -359,11 +378,11 @@ class Crunchbase:
             if get(item, 'is_lead_investor'):
                 leadPart = ' (lead investor)'
 
-            string = f'{name}({fundingRound}){leadPart}'
+            string = f'{name}: {fundingRound} {leadPart}'
 
             strings.append(string)
 
-        result =  '; '.join(strings)
+        result =  '\n'.join(strings)
 
         return result
 
@@ -752,7 +771,7 @@ class Crunchbase:
         if response == '' or not response or not response.content:
             return None
         
-        document = lh.fromstring(response.content)
+        document = lh.fromstring(response.text)
         
         return document
 

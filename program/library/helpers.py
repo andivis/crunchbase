@@ -142,15 +142,20 @@ def lettersAndSpacesOnly(s):
     return ''.join(filter(lambda x: x.isalpha() or x == ' ', s))
 
 
-def compactNumber(num):
-    num = int(num)
+def compactNumber(num, decimalPlaces=0, thresholdForMoreDecimals=None, moreDecimals=1):
+    num = float(num)
+
+    if thresholdForMoreDecimals != None and num  < 50 * 1000 * 1000:
+        decimalPlaces = moreDecimals
 
     magnitude = 0
     while abs(num) >= 1000:
         magnitude += 1
         num /= 1000.0
     # add more suffixes if you need them
-    return '%.0f%s' % (num, ['', 'K', 'M', 'G', 'T', 'P'][magnitude])
+
+    formatString = f'%.{decimalPlaces}f%s'
+    return formatString % (num, ['', 'K', 'M', 'G', 'T', 'P'][magnitude])
 
 def fixedDecimals(n, numberOfDecimalPlaces):
     result = ''
@@ -167,7 +172,7 @@ def fixedDecimals(n, numberOfDecimalPlaces):
 def getPrintableName(s, character=' '):
     result = addBeforeCapitalLetters(s).lower()
 
-    result = result.replace('_', ' ');
+    result = result.replace('_', ' ')
 
     return result
 
