@@ -650,8 +650,6 @@ class Crunchbase:
 
         self.setLogPrefix(inputRow)
 
-        self.log.info(f'result: {self.searchResultsCount}: {url}')
-
         if not self.passesFilters(searchResult, url, searchSite):
             return result
 
