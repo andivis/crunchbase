@@ -20,15 +20,6 @@
             "values": [
                 "united-kingdom"
             ]
-        },
-        {
-            "type": "predicate",
-            "field_id": "rank_org",
-            "operator_id": "between",
-            "values": [
-                5000,
-                6000
-            ]
         }
     ],
     "field_aggregators": [],

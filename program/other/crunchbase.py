@@ -378,7 +378,7 @@ class Crunchbase:
             if get(item, 'is_lead_investor'):
                 leadPart = ' (lead investor)'
 
-            string = f'{name}: {fundingRound} {leadPart}'
+            string = f'{name}: {fundingRound}{leadPart}'
 
             strings.append(string)
 
@@ -427,8 +427,11 @@ class Crunchbase:
         self.filterIndex = 0
         self.maximumFilterValue = 100 * 1000
         self.filterStep = 10 * 1000
+        
+        if self.options['useSearchFilters']:
+            self.filterStep = self.maximumFilterValue
 
-        if '--debug' in sys.argv or self.options['customFilterStep']:
+        if self.options['customFilterStep']:
             if not self.options['customFilterStep']:
                 self.options['customFilterStep'] = 100
 
@@ -507,16 +510,13 @@ class Crunchbase:
         if self.pageIndex > 0:
             self.log.info(f'Getting page {self.pageIndex + 1}')
 
-        if searchSite == 'google.com':
-            self.api.proxies = self.internet.getRandomProxy()
-        else:
-            self.api.proxies = None
-        
         keyword = get(inputRow, 'keyword')
         
         searchResults = []
 
-        if searchSite == 'google.com':
+        if 'crunchbase.com/organization/' in keyword:
+            searchResults = [keyword]
+        elif searchSite == 'google.com':
             self.google.captcha = False
             searchResults = self.google.search(f'site:crunchbase.com "{keyword}"', 5)
 
@@ -532,6 +532,8 @@ class Crunchbase:
                 self.api.setHeadersFromHarFile('program/resources/headers-search.json', '')
 
             if get(inputRow, 'search type') == 'location':
+                self.api.proxies = None        
+
                 toSend = helpers.getJsonFile('program/resources/body-search.json')
                 
                 if self.options['refreshOnly']:
@@ -542,14 +544,24 @@ class Crunchbase:
                 else:
                     toSend['query'][0]['values'][0] = keyword
 
-                    self.minimumRank = 0 + (self.filterIndex * self.filterStep)
-                    
-                    self.maximumRank = 0 + ((self.filterIndex + 1) * self.filterStep)
-                    self.maximumRank = self.maximumRank - 1
+                    if self.options['useSearchFilters']:
+                        self.minimumRank = 0 + (self.filterIndex * self.filterStep)
+                        
+                        self.maximumRank = 0 + ((self.filterIndex + 1) * self.filterStep)
+                        self.maximumRank = self.maximumRank - 1
 
-                    self.setLogPrefix(inputRow)
+                        self.setLogPrefix(inputRow)
 
-                    toSend['query'][1]['values'] = [self.minimumRank, self.maximumRank]
+                        predicate = {
+                            'type': 'predicate',
+                            'field_id': 'rank_org',
+                            'operator_id': 'between',
+                            'values': []
+                        }
+
+                        toSend['query'].append(predicate)
+
+                        toSend['query'][1]['values'] = [self.minimumRank, self.maximumRank]
 
                 if self.afterId:
                     toSend["after_id"] = self.afterId
@@ -558,6 +570,8 @@ class Crunchbase:
 
                 response = self.api.post(f'/v4/data/searches/organizations?source=slug', data=toSend, responseIsJson=False, returnResponseObject=True)
             else:
+                self.api.proxies = self.internet.getRandomProxy()
+
                 response = self.api.get(f'/v4/data/autocompletes?query={keyword}&collection_ids=organizations&limit=25&source=topSearch', responseIsJson=False, returnResponseObject=True)
 
             self.handleCaptcha(response)
@@ -597,7 +611,9 @@ class Crunchbase:
 
                 url = ''
                 
-                if searchSite == 'google.com':
+                if 'crunchbase.com/organization/' in keyword:
+                    url = '/organization/' + self.getProfileId(searchResult)
+                elif searchSite == 'google.com':
                     if not '/organization/' in searchResult:
                         continue 
 
@@ -630,12 +646,14 @@ class Crunchbase:
     def handleSearchResult(self, inputRow, url, searchResult, searchSite):
         result = 'should continue'
 
-        self.searchResultsCount += 1            
+        self.searchResultsCount += 1
+
+        self.setLogPrefix(inputRow)
+
+        self.log.info(f'result: {self.searchResultsCount}: {url}')
 
         if not self.passesFilters(searchResult, url, searchSite):
             return result
-
-        self.setLogPrefix(inputRow)
 
         profile = self.getProfile(url)
 
@@ -688,7 +706,10 @@ class Crunchbase:
             line = f'Keyword {self.inputRowIndex + 1} of {len(self.inputRows)}: {get(self.inputRow, "keyword")}'
         
             if get(inputRow, 'search type') == 'location':
-                line = f'{get(self.inputRow, "keyword")}. Filter {self.filterIndex + 1} of {self.totalSteps}: rank {self.minimumRank} - {self.maximumRank}. Page: {self.pageIndex + 1}. Results: {self.searchResultsCount}.'
+                if self.options['useSearchFilters']:
+                    line = f'{get(self.inputRow, "keyword")}. Filter {self.filterIndex + 1} of {self.totalSteps}: rank {self.minimumRank} - {self.maximumRank}. Page: {self.pageIndex + 1}. Results: {self.searchResultsCount}.'
+                else:
+                    line = f'{get(self.inputRow, "keyword")}. Page: {self.pageIndex + 1}. Results: {self.searchResultsCount} of {self.totalSearchResults}.'
         
         helpers.setLogPrefix(self.log, line)
 
